@@ -1,0 +1,149 @@
+{
+  "theme": "light",
+  "archetype": "Archetype 4 (Swiss & High-Contrast)",
+  "design_philosophy": {
+    "core_principles": [
+      "Color is Function Only: 95% of the UI should be monochrome. Color exists only to guide action.",
+      "Asymmetry and Grid Structures: Expose the skeleton. Use visible grid lines and 1px borders to separate content instead of drop shadows.",
+      "Generous Spacing: Use 2-3x more spacing than typical SaaS to create a premium, uncrowded feel.",
+      "High Definition Text: Radical weight contrast (Black vs Light) with tight tracking on headings."
+    ],
+    "forbidden": [
+      "Generic SaaS Blue (unless explicitly required for Microsoft SSO branding)",
+      "Purple-blue gradients",
+      "Inter font for headings",
+      "Center-aligned everything",
+      "Soft, muddy shadows"
+    ]
+  },
+  "colors": {
+    "background": {
+      "page": "#FFFFFF",
+      "subtle": "#F9F9FA",
+      "muted": "#F3F4F6"
+    },
+    "surface": {
+      "card": "#FFFFFF",
+      "glass": "rgba(255, 255, 255, 0.7)",
+      "inverted": "#0A0A0A"
+    },
+    "border": {
+      "default": "#E5E7EB",
+      "strong": "#D1D5DB",
+      "focus": "#0047FF"
+    },
+    "text": {
+      "primary": "#0A0A0A",
+      "secondary": "#52525B",
+      "tertiary": "#A1A1AA",
+      "inverted": "#FFFFFF",
+      "brand": "#0047FF"
+    },
+    "accent": {
+      "primary": "#0047FF",
+      "primary_hover": "#003BD1",
+      "destructive": "#FF3B30",
+      "success": "#10B981",
+      "warning": "#F59E0B"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "'Cabinet Grotesk', 'General Sans', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl tracking-tighter font-light text-primary",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-medium text-primary",
+      "h3": "text-xl sm:text-2xl tracking-tight font-medium text-primary",
+      "h4": "text-lg sm:text-xl font-semibold text-primary",
+      "body": "text-base leading-relaxed text-secondary",
+      "body_small": "text-sm leading-normal text-secondary",
+      "label_overline": "text-xs tracking-[0.2em] uppercase font-semibold text-tertiary"
+    }
+  },
+  "spacing_layout": {
+    "padding": {
+      "container": "p-6 md:p-12",
+      "card": "p-6 md:p-8"
+    },
+    "grid_strategies": {
+      "launchpad": "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr",
+      "admin_panel": "grid grid-cols-1 lg:grid-cols-12 gap-8"
+    }
+  },
+  "surface_strategies": {
+    "header": {
+      "type": "Glassmorphism",
+      "classes": "sticky top-0 z-50 bg-white/70 backdrop-blur-xl border-b border-black/5"
+    },
+    "cards": {
+      "type": "Grid Borders",
+      "classes": "bg-white border border-gray-200 transition-all duration-200 hover:border-accent-primary hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)]",
+      "radius": "rounded-none sm:rounded-md"
+    },
+    "buttons": {
+      "primary": "bg-[#0A0A0A] text-white hover:bg-gray-800 transition-colors font-medium rounded-md px-6 py-2.5",
+      "secondary": "bg-white border border-gray-200 text-gray-900 hover:bg-gray-50 transition-colors font-medium rounded-md px-6 py-2.5",
+      "accent": "bg-[#0047FF] text-white hover:bg-[#003BD1] transition-colors font-medium rounded-md px-6 py-2.5"
+    }
+  },
+  "components": {
+    "login_page": {
+      "layout": "Two-column split screen (50/50). Left side contains login logic vertically centered with generous padding. Right side features a full-bleed architectural image.",
+      "elements": {
+        "title": "H1 with tracking-tighter, left-aligned.",
+        "subtitle": "Text-secondary, left-aligned.",
+        "sso_button": "Secondary button style, full width, with Azure/Microsoft icon.",
+        "divider": "Thin 1px border with 'OR' in small overline text.",
+        "form": "Shadcn input fields with sharp borders. Primary button full width."
+      }
+    },
+    "launchpad": {
+      "layout": "Header with user profile, followed by a wide container with the app grid.",
+      "app_card": {
+        "layout": "Flex column, p-6, 1px border. Icon on top left, Title and Description below.",
+        "icon": "Container: w-12 h-12 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center text-primary",
+        "title": "H4, mt-4",
+        "description": "text-sm text-secondary line-clamp-2 mt-1",
+        "hover_state": "Border changes to #0047FF, icon scales up slightly (scale-105)."
+      }
+    },
+    "admin_panel": {
+      "layout": "Sidebar navigation (col-span-3) + Main content area (col-span-9).",
+      "tabs": "Use horizontal navigation if sidebar is not preferred. 1px bottom border for inactive, #0A0A0A border-b-2 for active.",
+      "tables": "Cardless style. Raw HTML table or Shadcn Table inside a rounded-md container with 1px border. No shadows. Alternating row colors (white and #F9F9FA).",
+      "actions": "Top right of table sections. 'Add New' buttons use Primary or Accent button styles."
+    }
+  },
+  "interactions": {
+    "hover": "All interactive elements MUST explicitly set text color and background on hover.",
+    "focus": "focus:outline-none focus:ring-2 focus:ring-[#0047FF] focus:ring-offset-2",
+    "motion": "transition-all duration-200 ease-in-out"
+  },
+  "media": {
+    "image_urls": [
+      {
+        "category": "login_hero_background",
+        "url": "https://images.pexels.com/photos/950241/pexels-photo-950241.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Minimalist white architectural interior showcasing futuristic design. Used as the right-side full-bleed image on the login page."
+      },
+      {
+        "category": "login_hero_alt",
+        "url": "https://images.unsplash.com/photo-1598966412894-9bfbddb0a15c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwd2hpdGUlMjBhcmNoaXRlY3R1cmV8ZW58MHx8fHwxNzc0NTY5NTU1fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Alternative white concrete building background."
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Run: yarn add lucide-react (if not already installed) for icons.",
+    "Add Cabinet Grotesk (Heading) and IBM Plex Sans (Body) via Google Fonts or standard imports in index.html.",
+    "Build the Login page as a pure HTML/Tailwind split layout. Do NOT use Shadcn Card for the main login container to avoid boxed looks. Let the form breathe on the white background.",
+    "For the App Launchpad, use the grid classes specified in spacing_layout.grid_strategies.",
+    "Admin tables must NOT have drop shadows. Use simple borders (border-gray-200).",
+    "Use data-testid on ALL interactive elements (e.g., data-testid='login-submit-button', data-testid='app-card-[app_id]').",
+    "For App Icons in the Launchpad, if a specific image logo is not provided, fallback to a lucide-react icon (e.g., LayoutDashboard, Users, Shield) enclosed in a rounded square.",
+    "Do NOT use arbitrary rounded classes higher than 'rounded-md' for general UI (keep it crisp)."
+  ]
+}
