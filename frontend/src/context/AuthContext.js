@@ -55,6 +55,13 @@ export const AuthProvider = ({ children }) => {
     return userData;
   };
 
+  const loginWithToken = async (token) => {
+    // Direct login with a token (from Azure SSO callback)
+    localStorage.setItem('token', token);
+    api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    await fetchUser();
+  };
+
   const requestMagicLink = async (email) => {
     const response = await api.post('/auth/magic-link', { email });
     return response.data;
@@ -72,6 +79,7 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     loginWithMagicLink,
+    loginWithToken,
     requestMagicLink,
     isAdmin: user?.role === 'admin',
   };

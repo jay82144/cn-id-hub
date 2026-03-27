@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,20 +11,58 @@ import { Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
 const LoginPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, requestMagicLink, loginWithMagicLink } = useAuth();
+  const { login, requestMagicLink, loginWithMagicLink, loginWithToken } = useAuth();
   
   const [mode, setMode] = useState('password'); // 'password' | 'magic-link' | 'magic-link-sent'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [azureSSOEnabled, setAzureSSOEnabled] = useState(false);
+  const [checkingSSO, setCheckingSSO] = useState(true);
 
-  // Check for magic link token in URL
-  useState(() => {
+  // Check for token or error in URL (from Azure SSO callback)
+  useEffect(() => {
     const token = searchParams.get('token');
+    const error = searchParams.get('error');
+    
     if (token) {
-      handleMagicLinkVerify(token);
+      handleTokenLogin(token);
+    } else if (error) {
+      toast.error(decodeURIComponent(error));
+      // Clear the URL params
+      window.history.replaceState({}, '', '/login');
     }
+    
+    // Check if Azure SSO is configured
+    checkAzureSSOConfig();
   }, [searchParams]);
+
+  const checkAzureSSOConfig = async () => {
+    try {
+      const response = await api.get('/auth/azure/config');
+      setAzureSSOEnabled(response.data.enabled && response.data.configured);
+    } catch (error) {
+      console.error('Failed to check Azure SSO config:', error);
+      setAzureSSOEnabled(false);
+    } finally {
+      setCheckingSSO(false);
+    }
+  };
+
+  const handleTokenLogin = async (token) => {
+    setLoading(true);
+    try {
+      await loginWithToken(token);
+      toast.success('Logged in successfully');
+      navigate('/launchpad');
+    } catch (error) {
+      toast.error('Login failed');
+      // Clear the URL params
+      window.history.replaceState({}, '', '/login');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleMagicLinkVerify = async (token) => {
     setLoading(true);
@@ -76,8 +115,22 @@ const LoginPage = () => {
     }
   };
 
-  const handleAzureSSO = () => {
-    toast.info('Azure SSO is not configured yet. Please configure it in Settings.');
+  const handleAzureSSO = async () => {
+    if (!azureSSOEnabled) {
+      toast.info('Azure SSO is not enabled. Please configure it in Admin Settings first.');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const response = await api.get('/auth/azure/login');
+      // Redirect to Microsoft login
+      window.location.href = response.data.auth_url;
+    } catch (error) {
+      const errorMsg = error.response?.data?.detail || 'Failed to initiate Azure SSO';
+      toast.error(errorMsg);
+      setLoading(false);
+    }
   };
 
   return (
@@ -102,17 +155,27 @@ const LoginPage = () => {
           <Button
             type="button"
             variant="outline"
-            className="w-full h-12 border-gray-200 hover:bg-gray-50 text-gray-900 font-medium mb-6"
+            className={`w-full h-12 border-gray-200 hover:bg-gray-50 text-gray-900 font-medium mb-6 ${
+              !azureSSOEnabled ? 'opacity-60' : ''
+            }`}
             onClick={handleAzureSSO}
+            disabled={loading || checkingSSO}
             data-testid="azure-sso-button"
           >
-            <svg className="w-5 h-5 mr-3" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M10 0H0V10H10V0Z" fill="#F25022"/>
-              <path d="M21 0H11V10H21V0Z" fill="#7FBA00"/>
-              <path d="M10 11H0V21H10V11Z" fill="#00A4EF"/>
-              <path d="M21 11H11V21H21V11Z" fill="#FFB900"/>
-            </svg>
+            {loading ? (
+              <Loader2 className="w-5 h-5 animate-spin mr-3" />
+            ) : (
+              <svg className="w-5 h-5 mr-3" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 0H0V10H10V0Z" fill="#F25022"/>
+                <path d="M21 0H11V10H21V0Z" fill="#7FBA00"/>
+                <path d="M10 11H0V21H10V11Z" fill="#00A4EF"/>
+                <path d="M21 11H11V21H21V11Z" fill="#FFB900"/>
+              </svg>
+            )}
             Continue with Microsoft
+            {!azureSSOEnabled && !checkingSSO && (
+              <span className="ml-2 text-xs text-gray-400">(not configured)</span>
+            )}
           </Button>
 
           {/* Divider */}
