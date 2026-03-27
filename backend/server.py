@@ -182,10 +182,9 @@ async def azure_sso_login(db: AsyncSession = Depends(get_db)):
     if not all([tenant_id, client_id, client_secret]):
         raise HTTPException(status_code=400, detail="Azure SSO is not fully configured")
     
-    # Build redirect URI from frontend URL
-    frontend_url = os.environ.get('CORS_ORIGINS', '').split(',')[0] if os.environ.get('CORS_ORIGINS') != '*' else 'http://localhost:3000'
-    # Use the backend callback endpoint
-    redirect_uri = f"{os.environ.get('REACT_APP_BACKEND_URL', 'http://localhost:8001')}/api/auth/azure/callback"
+    # Build redirect URI from backend URL
+    backend_url = os.environ.get('BACKEND_URL', 'https://employee-hub-283.preview.emergentagent.com')
+    redirect_uri = f"{backend_url}/api/auth/azure/callback"
     
     try:
         authority = f"https://login.microsoftonline.com/{tenant_id}"
@@ -241,10 +240,9 @@ async def azure_sso_callback(
     from fastapi.responses import RedirectResponse
     import requests
     
-    # Get frontend URL for redirect
-    frontend_url = os.environ.get('CORS_ORIGINS', '').split(',')[0] if os.environ.get('CORS_ORIGINS') != '*' else 'http://localhost:3000'
-    if frontend_url == '*':
-        frontend_url = 'http://localhost:3000'
+    # Get frontend URL for redirect (same domain as backend for this setup)
+    backend_url = os.environ.get('BACKEND_URL', 'https://employee-hub-283.preview.emergentagent.com')
+    frontend_url = backend_url  # Frontend and backend share the same domain
     
     if error:
         logger.error(f"Azure SSO error: {error} - {error_description}")
