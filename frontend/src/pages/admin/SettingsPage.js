@@ -1,0 +1,272 @@
+import { useState, useEffect } from 'react';
+import api from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { toast } from 'sonner';
+import { Loader2, RefreshCw, ExternalLink, AlertCircle } from 'lucide-react';
+
+const SettingsPage = () => {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  
+  const [bambooSettings, setBambooSettings] = useState({
+    api_key: '',
+    company_domain: '',
+    sync_enabled: false,
+  });
+  
+  const [azureSettings, setAzureSettings] = useState({
+    tenant_id: '',
+    client_id: '',
+    client_secret: '',
+    enabled: false,
+  });
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const [bambooRes, azureRes] = await Promise.all([
+        api.get('/settings/bamboohr'),
+        api.get('/settings/azure-sso'),
+      ]);
+      setBambooSettings({
+        api_key: bambooRes.data.api_key || '',
+        company_domain: bambooRes.data.company_domain || '',
+        sync_enabled: bambooRes.data.sync_enabled || false,
+      });
+      setAzureSettings({
+        tenant_id: azureRes.data.tenant_id || '',
+        client_id: azureRes.data.client_id || '',
+        client_secret: azureRes.data.client_secret || '',
+        enabled: azureRes.data.enabled || false,
+      });
+    } catch (error) {
+      toast.error('Failed to load settings');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveBambooSettings = async () => {
+    setSaving(true);
+    try {
+      await api.put('/settings/bamboohr', bambooSettings);
+      toast.success('BambooHR settings saved');
+    } catch (error) {
+      toast.error('Failed to save BambooHR settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveAzureSettings = async () => {
+    setSaving(true);
+    try {
+      await api.put('/settings/azure-sso', azureSettings);
+      toast.success('Azure SSO settings saved');
+    } catch (error) {
+      toast.error('Failed to save Azure SSO settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const triggerBambooSync = async () => {
+    setSyncing(true);
+    try {
+      await api.post('/settings/bamboohr/sync');
+      toast.success('BambooHR sync triggered');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to trigger sync');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl" data-testid="settings-page">
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
+        <p className="text-sm text-gray-500 mt-1">Configure integrations and system settings</p>
+      </div>
+
+      {/* BambooHR Settings */}
+      <Card className="mb-6">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg">BambooHR Integration</CardTitle>
+              <CardDescription>Sync employee data from BambooHR</CardDescription>
+            </div>
+            <Switch
+              checked={bambooSettings.sync_enabled}
+              onCheckedChange={(checked) => setBambooSettings({ ...bambooSettings, sync_enabled: checked })}
+              data-testid="bamboo-sync-enabled-switch"
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-md p-3 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-800">
+              BambooHR credentials are not yet available. Configure them here when ready.
+            </p>
+          </div>
+          
+          <div>
+            <Label htmlFor="bamboo_company">Company Domain</Label>
+            <Input
+              id="bamboo_company"
+              value={bambooSettings.company_domain}
+              onChange={(e) => setBambooSettings({ ...bambooSettings, company_domain: e.target.value })}
+              placeholder="yourcompany"
+              className="max-w-md"
+              data-testid="bamboo-company-input"
+            />
+            <p className="text-xs text-gray-500 mt-1">Your BambooHR subdomain (e.g., yourcompany.bamboohr.com)</p>
+          </div>
+          
+          <div>
+            <Label htmlFor="bamboo_api_key">API Key</Label>
+            <Input
+              id="bamboo_api_key"
+              type="password"
+              value={bambooSettings.api_key}
+              onChange={(e) => setBambooSettings({ ...bambooSettings, api_key: e.target.value })}
+              placeholder="Enter your BambooHR API key"
+              className="max-w-md"
+              data-testid="bamboo-api-key-input"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Get your API key from{' '}
+              <a
+                href="https://www.bamboohr.com/api/documentation/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline inline-flex items-center gap-1"
+              >
+                BambooHR API Documentation <ExternalLink className="w-3 h-3" />
+              </a>
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 pt-2">
+            <Button onClick={saveBambooSettings} disabled={saving} className="bg-gray-900 hover:bg-gray-800" data-testid="save-bamboo-settings-button">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Save Settings
+            </Button>
+            <Button
+              variant="outline"
+              onClick={triggerBambooSync}
+              disabled={syncing || !bambooSettings.api_key}
+              data-testid="sync-bamboo-button"
+            >
+              {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              Sync Now
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Azure SSO Settings */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg">Azure AD SSO</CardTitle>
+              <CardDescription>Configure Microsoft Entra ID (Azure AD) single sign-on</CardDescription>
+            </div>
+            <Switch
+              checked={azureSettings.enabled}
+              onCheckedChange={(checked) => setAzureSettings({ ...azureSettings, enabled: checked })}
+              data-testid="azure-sso-enabled-switch"
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-md p-3 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-800">
+              Azure AD credentials are not yet available. Configure them here when ready.
+            </p>
+          </div>
+          
+          <div>
+            <Label htmlFor="azure_tenant">Tenant ID</Label>
+            <Input
+              id="azure_tenant"
+              value={azureSettings.tenant_id}
+              onChange={(e) => setAzureSettings({ ...azureSettings, tenant_id: e.target.value })}
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              className="max-w-md font-mono text-sm"
+              data-testid="azure-tenant-input"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="azure_client">Client ID (Application ID)</Label>
+            <Input
+              id="azure_client"
+              value={azureSettings.client_id}
+              onChange={(e) => setAzureSettings({ ...azureSettings, client_id: e.target.value })}
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              className="max-w-md font-mono text-sm"
+              data-testid="azure-client-input"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="azure_secret">Client Secret</Label>
+            <Input
+              id="azure_secret"
+              type="password"
+              value={azureSettings.client_secret}
+              onChange={(e) => setAzureSettings({ ...azureSettings, client_secret: e.target.value })}
+              placeholder="Enter your client secret"
+              className="max-w-md"
+              data-testid="azure-secret-input"
+            />
+          </div>
+
+          <Separator />
+
+          <div>
+            <h4 className="text-sm font-medium text-gray-900 mb-2">Setup Instructions</h4>
+            <ol className="text-sm text-gray-600 space-y-2 list-decimal list-inside">
+              <li>Go to <a href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Azure Portal</a> → Microsoft Entra ID → App registrations</li>
+              <li>Create a new registration or select existing app</li>
+              <li>Copy the Application (client) ID and Directory (tenant) ID</li>
+              <li>Under Certificates & secrets, create a new client secret</li>
+              <li>Add redirect URI: <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{window.location.origin}/auth/callback</code></li>
+            </ol>
+          </div>
+
+          <div className="pt-2">
+            <Button onClick={saveAzureSettings} disabled={saving} className="bg-gray-900 hover:bg-gray-800" data-testid="save-azure-settings-button">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Save Settings
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default SettingsPage;
