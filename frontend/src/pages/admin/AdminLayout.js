@@ -20,19 +20,23 @@ import {
   User,
   ChevronDown,
   ArrowLeft,
+  Building2,
 } from 'lucide-react';
-
-const navItems = [
-  { path: '/admin/apps', label: 'Apps', icon: LayoutGrid },
-  { path: '/admin/users', label: 'Users', icon: Users },
-  { path: '/admin/roles', label: 'Roles', icon: Shield },
-  { path: '/admin/employees', label: 'Employees', icon: UserCircle },
-  { path: '/admin/settings', label: 'Settings', icon: Settings },
-];
 
 const AdminLayout = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  
+  const isSysadmin = user?.role === 'sysadmin';
+
+  const navItems = [
+    ...(isSysadmin ? [{ path: '/admin/companies', label: 'Companies', icon: Building2 }] : []),
+    { path: '/admin/apps', label: 'Apps', icon: LayoutGrid },
+    { path: '/admin/users', label: 'Users', icon: Users },
+    { path: '/admin/roles', label: 'Roles', icon: Shield },
+    { path: '/admin/employees', label: 'Employees', icon: UserCircle },
+    { path: '/admin/settings', label: 'Settings', icon: Settings },
+  ];
 
   const handleLogout = () => {
     logout();

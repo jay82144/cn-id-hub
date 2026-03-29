@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 from database import get_db
-from models import User, UserRole
+from models import User, UserRole as UserRoleEnum
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -92,7 +92,7 @@ async def get_current_user(
 async def get_admin_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    if current_user.role != UserRole.ADMIN:
+    if current_user.role not in [UserRoleEnum.SYSADMIN, UserRoleEnum.COMPANY_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"

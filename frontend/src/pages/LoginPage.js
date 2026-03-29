@@ -52,12 +52,27 @@ const LoginPage = () => {
   const handleTokenLogin = async (token) => {
     setLoading(true);
     try {
+      // Store token temporarily to check for password change requirement
+      localStorage.setItem('token', token);
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      
+      // Get user info
+      const response = await api.get('/auth/me');
+      const user = response.data;
+      
+      // Check if password change is required
+      if (user.must_change_password) {
+        navigate('/change-password');
+        return;
+      }
+      
       await loginWithToken(token);
       toast.success('Logged in successfully');
       navigate('/launchpad');
     } catch (error) {
       toast.error('Login failed');
-      // Clear the URL params
+      localStorage.removeItem('token');
+      delete api.defaults.headers.common['Authorization'];
       window.history.replaceState({}, '', '/login');
     } finally {
       setLoading(false);
@@ -86,7 +101,19 @@ const LoginPage = () => {
     
     setLoading(true);
     try {
-      await login(email, password);
+      const response = await api.post('/auth/login', { email, password });
+      const { access_token, user, must_change_password } = response.data;
+      
+      localStorage.setItem('token', access_token);
+      api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+      
+      if (must_change_password) {
+        toast.info('Please change your password');
+        navigate('/change-password');
+        return;
+      }
+      
+      await loginWithToken(access_token);
       toast.success('Logged in successfully');
       navigate('/launchpad');
     } catch (error) {

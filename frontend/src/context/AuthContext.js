@@ -81,7 +81,8 @@ export const AuthProvider = ({ children }) => {
     loginWithMagicLink,
     loginWithToken,
     requestMagicLink,
-    isAdmin: user?.role === 'admin',
+    isAdmin: ['sysadmin', 'company_admin'].includes(user?.role),
+    isSysadmin: user?.role === 'sysadmin',
   };
 
   return (
