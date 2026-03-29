@@ -76,6 +76,7 @@ networks:
     internal: true  # No external access
   identity-hub-external:
     driver: bridge
+    name: app-network
 
 volumes:
   postgres_data:
