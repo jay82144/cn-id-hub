@@ -8,6 +8,7 @@ Self-contained Docker deployment package for the Identity Hub and shared Postgre
 - Docker Compose 2.20+
 - 2GB+ available RAM
 - 10GB+ available disk space
+- External nginx reverse proxy on `app-network`
 
 ## Quick Start
 
@@ -26,18 +27,17 @@ cp .env.example .env
 Edit `.env` and set ALL required values:
 
 ```bash
-# Required - generate secure random strings
-JWT_SECRET=<generate with: openssl rand -base64 48>
-DB_PASSWORD=<strong password for database>
+# Generate secure passwords
+openssl rand -base64 24  # Use for POSTGRES_PASSWORD
+openssl rand -base64 24  # Use for DB_PASSWORD
+openssl rand -base64 48  # Use for JWT_SECRET
 
-# Required - your domain
+# Required values to change:
+POSTGRES_PASSWORD=<generated superuser password>
+DB_PASSWORD=<generated app user password>
+JWT_SECRET=<generated JWT secret>
 ID_APP_BASE_URL=https://id.yourdomain.com
 ALLOWED_CORS_ORIGINS=https://id.yourdomain.com
-
-# Optional - Microsoft SSO (leave empty to disable)
-AZURE_TENANT_ID=
-AZURE_CLIENT_ID=
-AZURE_CLIENT_SECRET=
 ```
 
 ### 3. Deploy the stack
@@ -52,16 +52,18 @@ docker compose up -d
 # Check all services are healthy
 docker compose ps
 
-# Check backend health
-curl http://localhost:8000/api/health
+# Check backend health (from within Docker network)
+docker exec id-backend curl -s http://localhost:8000/api/health
 
-# Check frontend (via nginx)
-curl http://localhost:80/
+# Or from another container on app-network:
+docker run --rm --network app-network curlimages/curl http://id-backend:8000/api/health
 ```
 
-### 5. Configure your reverse proxy (nginx on host)
+**Note:** The services use `expose` not `ports`, so they are only accessible from within `app-network`. Direct `curl http://localhost:8000` from the host will NOT work.
 
-Add to your nginx site configuration:
+### 5. Configure your reverse proxy
+
+Your external nginx (already on `app-network`) should proxy to the containers:
 
 ```nginx
 server {
@@ -84,10 +86,9 @@ server {
 }
 ```
 
-Or use the external nginx with `app-network`:
+If your nginx is not yet on `app-network`:
 
-```nginx
-# Ensure nginx container is on app-network
+```bash
 docker network connect app-network your-nginx-container
 ```
 
@@ -116,27 +117,52 @@ docker network connect app-network your-nginx-container
 │         │                                       │            │
 │         │                                       │            │
 │         ▼                                       │            │
-│  External nginx                          Not exposed         │
-│  (your server)                          (internal only)      │
+│  Your nginx proxy                        Not exposed         │
+│  (on app-network)                       (internal only)      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Services
 
-| Service | Container | Port | Description |
-|---------|-----------|------|-------------|
+| Service | Container | Internal Port | Description |
+|---------|-----------|---------------|-------------|
 | Frontend | id-frontend | 80 | React app served via nginx |
 | Backend | id-backend | 8000 | FastAPI application |
 | Database | shared-postgres | 5432 | PostgreSQL 16 (internal only) |
 
-### URLs
+### Internal URLs (within app-network)
 
-| Type | URL |
-|------|-----|
-| External Frontend | `https://id.yourdomain.com` |
-| External API | `https://id.yourdomain.com/api` |
-| Internal Backend | `http://id-backend:8000` |
-| Internal Database | `shared-postgres:5432` |
+| Service | URL |
+|---------|-----|
+| Frontend | `http://id-frontend:80` |
+| Backend API | `http://id-backend:8000/api` |
+| Database | `postgresql://id_app_user:***@shared-postgres:5432/id_app` |
+
+---
+
+## Important: Database Initialization
+
+The PostgreSQL init script (`scripts/init-db.sh`) **only runs once** when the database volume is first created.
+
+### What this means:
+
+- If you start with incorrect `.env` values, fix them, and restart - the init script will NOT rerun
+- The `id_app_user` and grants are created only on first initialization
+
+### If you need to reinitialize:
+
+```bash
+# WARNING: This deletes all data!
+docker compose down
+docker volume rm id-app-postgres-data
+docker compose up -d
+```
+
+### To verify initialization succeeded:
+
+```bash
+docker exec shared-postgres psql -U postgres -c "\\du" | grep id_app_user
+```
 
 ---
 
@@ -146,7 +172,8 @@ docker network connect app-network your-nginx-container
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `DB_PASSWORD` | PostgreSQL password | `SecureP@ssw0rd!` |
+| `POSTGRES_PASSWORD` | PostgreSQL superuser password | `<openssl rand -base64 24>` |
+| `DB_PASSWORD` | ID app user password | `<openssl rand -base64 24>` |
 | `JWT_SECRET` | JWT signing key (min 32 chars) | `<openssl rand -base64 48>` |
 | `ID_APP_BASE_URL` | External URL | `https://id.yourdomain.com` |
 | `ALLOWED_CORS_ORIGINS` | Allowed origins (comma-separated) | `https://id.yourdomain.com` |
@@ -191,13 +218,16 @@ This creates:
 ### Manual creation
 
 ```bash
-docker exec -it -e PGPASSWORD=your_postgres_password shared-postgres psql -U postgres
+# Connect as postgres superuser
+docker exec -it -e PGPASSWORD="${POSTGRES_PASSWORD}" shared-postgres psql -U postgres
 
+-- Then run:
 CREATE USER myapp_app_user WITH PASSWORD 'secure_password';
 CREATE DATABASE myapp_app OWNER myapp_app_user;
 GRANT ALL PRIVILEGES ON DATABASE myapp_app TO myapp_app_user;
 \c myapp_app
 GRANT ALL ON SCHEMA public TO myapp_app_user;
+\q
 ```
 
 ---
@@ -232,26 +262,16 @@ docker compose up -d
 ### Backup database
 
 ```bash
-docker exec shared-postgres pg_dump -U id_app_user id_app > backup_$(date +%Y%m%d).sql
+docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" shared-postgres \
+    pg_dump -U postgres id_app > backup_$(date +%Y%m%d).sql
 ```
 
 ### Restore database
 
 ```bash
-cat backup_20240101.sql | docker exec -i shared-postgres psql -U id_app_user id_app
+cat backup_20240101.sql | docker exec -i -e PGPASSWORD="${POSTGRES_PASSWORD}" shared-postgres \
+    psql -U postgres id_app
 ```
-
----
-
-## Security Checklist
-
-- [ ] Changed `JWT_SECRET` to a secure random string
-- [ ] Changed `DB_PASSWORD` to a strong password
-- [ ] Set `ALLOWED_CORS_ORIGINS` to specific domains (no wildcards)
-- [ ] Set `COOKIE_SECURE=true` for HTTPS
-- [ ] Changed bootstrap admin credentials on first login
-- [ ] PostgreSQL not exposed publicly (internal network only)
-- [ ] SSL/TLS configured on reverse proxy
 
 ---
 
@@ -264,19 +284,43 @@ cat backup_20240101.sql | docker exec -i shared-postgres psql -U id_app_user id_
 docker compose logs id-backend
 
 # Common issues:
-# - Database not ready: wait a few seconds, check shared-postgres health
+# - Database not ready: check shared-postgres health first
 # - Missing JWT_SECRET: ensure .env has JWT_SECRET set
-# - CORS misconfigured: check ALLOWED_CORS_ORIGINS
+# - CORS misconfigured: check ALLOWED_CORS_ORIGINS is set (no wildcards)
 ```
 
 ### Database connection failed
 
 ```bash
-# Check postgres is running
+# Check postgres is running and healthy
 docker compose ps shared-postgres
 
-# Test connection
-docker exec -it shared-postgres psql -U id_app_user -d id_app -c "SELECT 1;"
+# Verify app user exists
+docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" shared-postgres \
+    psql -U postgres -c "\\du" | grep id_app_user
+
+# Test connection as app user
+docker exec -e PGPASSWORD="${DB_PASSWORD}" shared-postgres \
+    psql -U id_app_user -d id_app -c "SELECT 1;"
+```
+
+### Init script didn't run
+
+The init script only runs on first volume creation. If `id_app_user` doesn't exist:
+
+```bash
+# Option 1: Remove volume and restart (WARNING: data loss)
+docker compose down
+docker volume rm id-app-postgres-data
+docker compose up -d
+
+# Option 2: Manually create user
+docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" shared-postgres psql -U postgres <<EOF
+CREATE USER id_app_user WITH PASSWORD '${DB_PASSWORD}';
+GRANT ALL PRIVILEGES ON DATABASE id_app TO id_app_user;
+\c id_app
+GRANT ALL ON SCHEMA public TO id_app_user;
+EOF
 ```
 
 ### Frontend shows blank page
@@ -285,16 +329,29 @@ docker exec -it shared-postgres psql -U id_app_user -d id_app -c "SELECT 1;"
 # Check frontend container
 docker compose logs id-frontend
 
-# Verify nginx config
-docker exec id-frontend cat /etc/nginx/conf.d/default.conf
+# Verify nginx is serving files
+docker exec id-frontend ls -la /usr/share/nginx/html/
 ```
 
 ### CORS errors
 
-Ensure `ALLOWED_CORS_ORIGINS` includes your frontend URL exactly:
+Ensure `ALLOWED_CORS_ORIGINS` includes your frontend URL exactly (no trailing slash):
 ```
 ALLOWED_CORS_ORIGINS=https://id.yourdomain.com
 ```
+
+---
+
+## Security Checklist
+
+- [ ] Changed `JWT_SECRET` to a secure random string (min 32 chars)
+- [ ] Changed `POSTGRES_PASSWORD` to a strong password
+- [ ] Changed `DB_PASSWORD` to a strong password (different from POSTGRES_PASSWORD)
+- [ ] Set `ALLOWED_CORS_ORIGINS` to specific domains (no wildcards)
+- [ ] Set `COOKIE_SECURE=true` for HTTPS
+- [ ] Changed bootstrap admin credentials on first login
+- [ ] PostgreSQL not exposed publicly (internal network only)
+- [ ] SSL/TLS configured on reverse proxy
 
 ---
 
@@ -303,11 +360,11 @@ ALLOWED_CORS_ORIGINS=https://id.yourdomain.com
 ```
 deploy/
 ├── docker-compose.yml      # Main compose file
-├── .env.example            # Environment template
+├── .env.example            # Environment template (copy to .env)
 ├── README.md               # This file
 ├── backend/
 │   ├── Dockerfile          # Backend container
-│   ├── entrypoint.sh       # Startup script
+│   ├── entrypoint.sh       # Startup script (DB wait + migrations)
 │   ├── requirements.txt    # Python dependencies
 │   ├── server.py           # FastAPI app
 │   ├── auth.py             # Authentication
@@ -315,26 +372,31 @@ deploy/
 │   ├── models.py           # SQLAlchemy models
 │   └── schemas.py          # Pydantic schemas
 ├── frontend/
-│   ├── Dockerfile          # Frontend container
+│   ├── Dockerfile          # Frontend container (multi-stage)
 │   ├── nginx.conf          # Nginx config
 │   ├── package.json        # Node dependencies
+│   ├── yarn.lock           # Locked dependencies
 │   └── src/                # React source
 └── scripts/
-    ├── init-db.sh          # Database init
-    └── create-app-database.sh  # New app DB bootstrap
+    ├── init-db.sh          # Database init (runs once on first start)
+    └── create-app-database.sh  # Bootstrap script for new app DBs
 ```
 
 ---
 
-## Support
+## Health Endpoints
 
-### Health Endpoints
+| Service | Endpoint | Expected Response |
+|---------|----------|-------------------|
+| Backend | `GET /api/health` | `{"status": "healthy"}` |
+| Backend | `GET /api/` | `{"message": "Identity & Employee Hub API", "version": "3.0.0"}` |
 
-- Backend: `GET /api/health` → `{"status": "healthy"}`
-- Frontend: `GET /` → HTML page
+### Testing from within Docker network:
 
-### API Documentation
+```bash
+# Backend health
+docker exec id-backend wget -qO- http://localhost:8000/api/health
 
-Once deployed, visit:
-- Swagger UI: `https://id.yourdomain.com/api/docs`
-- ReDoc: `https://id.yourdomain.com/api/redoc`
+# Frontend health (returns HTML)
+docker exec id-frontend wget -qO- http://localhost:80/ | head -5
+```
