@@ -83,6 +83,12 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - **Password:** `FinalSecure456!`
 - **Role:** `sysadmin`
 
+## Production Bootstrap Credentials
+For fresh deployments:
+- **Email:** `admin.new@local`
+- **Password:** `ChangeMeNow!`
+- **Note:** Must change BOTH email AND password on first login
+
 ## Prioritized Backlog
 
 ### P0 (Critical - DONE)
@@ -95,6 +101,7 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 ### P1 (High Priority - DONE)
 - [x] Alembic migrations (configured and working)
 - [x] API Key management UI in admin panel
+- [x] Production Docker deployment package
 - [ ] Password reset flow via email
 - [ ] User self-service profile editing
 - [ ] Audit logging for admin actions

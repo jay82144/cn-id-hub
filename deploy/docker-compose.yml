@@ -1,27 +1,33 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
+  # ============================================================
+  # SHARED POSTGRESQL DATABASE
+  # ============================================================
   shared-postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: shared-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: id_app_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: id_app
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
     networks:
-      - app-network-internal
+      - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U id_app_user -d id_app"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    # Not exposed to host - only accessible within Docker network
+      start_period: 10s
+    # Database is NOT exposed publicly - only accessible via app-network
 
-  # FastAPI Backend
+  # ============================================================
+  # IDENTITY HUB BACKEND (FastAPI)
+  # ============================================================
   id-backend:
     build:
       context: ./backend
@@ -29,19 +35,42 @@ services:
     container_name: id-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://id_app_user:${POSTGRES_PASSWORD}@shared-postgres:5432/id_app
+      # Database Configuration
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DATABASE_URL: postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+      
+      # JWT & Auth Configuration
       JWT_SECRET: ${JWT_SECRET}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-15}
+      REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-30}
       MAGIC_LINK_EXPIRATION_MINUTES: ${MAGIC_LINK_EXPIRATION_MINUTES:-15}
-      CORS_ORIGINS: ${CORS_ORIGINS}
-      BACKEND_URL: ${BACKEND_URL}
+      
+      # URL Configuration
+      BACKEND_URL: ${ID_APP_BASE_URL}
+      
+      # CORS Configuration
+      CORS_ORIGINS: ${ALLOWED_CORS_ORIGINS}
+      
+      # Cookie Security
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
-      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-*}
+      
+      # O365 / Microsoft SSO (optional)
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+      
+      # Bootstrap Admin
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin.new@local}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-ChangeMeNow!}
     depends_on:
       shared-postgres:
         condition: service_healthy
     networks:
-      - app-network-internal
       - app-network
     expose:
       - "8000"
@@ -50,36 +79,44 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
-  # React Frontend
+  # ============================================================
+  # IDENTITY HUB FRONTEND (React + Nginx)
+  # ============================================================
   id-frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        REACT_APP_BACKEND_URL: ${BACKEND_URL}
+        REACT_APP_BACKEND_URL: ${ID_APP_BASE_URL}
     container_name: id-frontend
     restart: unless-stopped
-    environment:
-      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
     networks:
       - app-network
     expose:
       - "80"
     depends_on:
-      - id-backend
+      id-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
+# ============================================================
+# NETWORKS
+# ============================================================
 networks:
-  app-network-internal:
-    name: app-network-internal
-    driver: bridge
-    internal: true  # No external access - database network
   app-network:
+    external: true
     name: app-network
-    driver: bridge
-    # External access allowed - frontend/backend network
 
+# ============================================================
+# VOLUMES
+# ============================================================
 volumes:
   postgres_data:
     name: id-app-postgres-data

@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ArrowLeft,
   Building2,
+  Key,
 } from 'lucide-react';
 
 const AdminLayout = () => {
@@ -35,6 +36,7 @@ const AdminLayout = () => {
     { path: '/admin/users', label: 'Users', icon: Users },
     { path: '/admin/roles', label: 'Roles', icon: Shield },
     { path: '/admin/employees', label: 'Employees', icon: UserCircle },
+    { path: '/admin/api-keys', label: 'API Keys', icon: Key },
     { path: '/admin/settings', label: 'Settings', icon: Settings },
   ];
 

@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import LoginPage from "@/pages/LoginPage";
 import ChangePasswordPage from "@/pages/ChangePasswordPage";
+import ChangeCredentialsPage from "@/pages/ChangeCredentialsPage";
 import LaunchpadPage from "@/pages/LaunchpadPage";
 import AdminLayout from "@/pages/admin/AdminLayout";
 import AppsPage from "@/pages/admin/AppsPage";
@@ -12,9 +13,10 @@ import RolesPage from "@/pages/admin/RolesPage";
 import EmployeesPage from "@/pages/admin/EmployeesPage";
 import SettingsPage from "@/pages/admin/SettingsPage";
 import CompaniesPage from "@/pages/admin/CompaniesPage";
+import ApiKeysPage from "@/pages/admin/ApiKeysPage";
 
 const ProtectedRoute = ({ children, adminOnly = false }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, mustChangeCredentials } = useAuth();
   
   if (loading) {
     return (
@@ -28,8 +30,13 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
     return <Navigate to="/login" replace />;
   }
   
+  // Check if credential change is required (both email and password)
+  if (mustChangeCredentials.email && mustChangeCredentials.password) {
+    return <Navigate to="/change-credentials" replace />;
+  }
+  
   // Check if password change is required
-  if (user.must_change_password) {
+  if (mustChangeCredentials.password || user.must_change_password) {
     return <Navigate to="/change-password" replace />;
   }
   
@@ -67,6 +74,7 @@ function AppRoutes() {
         </PublicRoute>
       } />
       <Route path="/change-password" element={<ChangePasswordPage />} />
+      <Route path="/change-credentials" element={<ChangeCredentialsPage />} />
       <Route path="/launchpad" element={
         <ProtectedRoute>
           <LaunchpadPage />
@@ -83,6 +91,7 @@ function AppRoutes() {
         <Route path="users" element={<UsersPage />} />
         <Route path="roles" element={<RolesPage />} />
         <Route path="employees" element={<EmployeesPage />} />
+        <Route path="api-keys" element={<ApiKeysPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="/" element={<Navigate to="/launchpad" replace />} />

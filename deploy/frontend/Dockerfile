@@ -1,49 +1,44 @@
-# =====================================
-# Identity Hub Frontend - Dockerfile
-# =====================================
+# ============================================================
+# Identity Hub Frontend - Production Dockerfile
+# Multi-stage build: Build React app, serve with Nginx
+# ============================================================
 
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Accept build arg for API URL
-ARG REACT_APP_BACKEND_URL
-ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+# Copy package files
+COPY package.json yarn.lock ./
 
 # Install dependencies
-COPY package.json yarn.lock ./
 RUN yarn install --frozen-lockfile
 
-# Copy source and build
+# Copy source code
 COPY . .
+
+# Build argument for backend URL
+ARG REACT_APP_BACKEND_URL
+ENV REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL}
+
+# Build the app
 RUN yarn build
 
 # Stage 2: Production
 FROM nginx:alpine
 
-# Remove default nginx config
-RUN rm /etc/nginx/conf.d/default.conf
-
-# Copy custom nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# Copy built assets from builder
+# Copy built assets
 COPY --from=builder /app/build /usr/share/nginx/html
 
-# Create non-root user for nginx
-RUN chown -R nginx:nginx /usr/share/nginx/html && \
-    chown -R nginx:nginx /var/cache/nginx && \
-    chown -R nginx:nginx /var/log/nginx && \
-    touch /var/run/nginx.pid && \
-    chown -R nginx:nginx /var/run/nginx.pid
+# Copy nginx configuration
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Expose port
+# Expose port 80
 EXPOSE 80
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:80/ || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:80/ || exit 1
 
-# Run nginx
+# Start nginx
 CMD ["nginx", "-g", "daemon off;"]
