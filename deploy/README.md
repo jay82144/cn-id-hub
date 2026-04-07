@@ -191,11 +191,13 @@ This creates:
 ### Manual creation
 
 ```bash
-docker exec -it shared-postgres psql -U postgres
+docker exec -it -e PGPASSWORD=your_postgres_password shared-postgres psql -U postgres
 
 CREATE USER myapp_app_user WITH PASSWORD 'secure_password';
 CREATE DATABASE myapp_app OWNER myapp_app_user;
 GRANT ALL PRIVILEGES ON DATABASE myapp_app TO myapp_app_user;
+\c myapp_app
+GRANT ALL ON SCHEMA public TO myapp_app_user;
 ```
 
 ---
