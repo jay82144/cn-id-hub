@@ -102,14 +102,20 @@ const LoginPage = () => {
     setLoading(true);
     try {
       const response = await api.post('/auth/login', { email, password });
-      const { access_token, user, must_change_password } = response.data;
+      const { access_token, user, must_change_password, must_change_email } = response.data;
       
       localStorage.setItem('token', access_token);
       api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
       
-      if (must_change_password) {
-        toast.info('Please change your password');
-        navigate('/change-password');
+      // Check if credential change is required
+      if (must_change_email || must_change_password) {
+        if (must_change_email && must_change_password) {
+          toast.info('Please update your email and password');
+          navigate('/change-credentials');
+        } else if (must_change_password) {
+          toast.info('Please change your password');
+          navigate('/change-password');
+        }
         return;
       }
       
@@ -117,7 +123,13 @@ const LoginPage = () => {
       toast.success('Logged in successfully');
       navigate('/launchpad');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Invalid credentials');
+      const detail = error.response?.data?.detail;
+      // Handle validation errors from Pydantic
+      if (Array.isArray(detail)) {
+        toast.error(detail.map(e => e.msg).join(', '));
+      } else {
+        toast.error(detail || 'Invalid credentials');
+      }
     } finally {
       setLoading(false);
     }

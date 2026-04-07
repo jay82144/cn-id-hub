@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -13,35 +13,42 @@ from datetime import datetime, timezone, timedelta
 import uuid
 import json
 
-from database import get_db, init_db, engine, async_session_maker
+# Load environment before other imports
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+from database import get_db, engine, async_session_maker
 from models import (
     User, Role, App, RoleApp, UserApp, UserRoleAssignment, Employee, Settings, CompanySettings, Company,
-    UserRole as UserRoleEnum, UserStatus, EmployeeStatus, AuthMethod
+    UserRole as UserRoleEnum, UserStatus, EmployeeStatus, AuthMethod, RefreshToken, APIKey, APIKeyScope
 )
 from schemas import (
     LoginRequest, MagicLinkRequest, MagicLinkVerify, TokenResponse, ChangePasswordRequest,
+    ChangeEmailRequest, ChangeCredentialsRequest, RefreshTokenResponse,
     UserCreate, UserUpdate, UserResponse, UserWithApps,
     RoleCreate, RoleUpdate, RoleResponse, RoleWithApps,
     AppCreate, AppUpdate, AppResponse,
     EmployeeCreate, EmployeeUpdate, EmployeeResponse,
     SettingUpdate, SettingResponse, BambooHRSettings, AzureSSOSettings,
     RoleAppAssignment, UserAppAssignment, UserRoleAssignmentSchema,
-    LaunchpadResponse, CompanyCreate, CompanyUpdate, CompanyResponse, CompanyBranding
+    LaunchpadResponse, CompanyCreate, CompanyUpdate, CompanyResponse, CompanyBranding,
+    APIKeyCreate, APIKeyResponse, APIKeyCreatedResponse, TokenVerifyResponse,
+    APIKeyScope as APIKeyScopeSchema
 )
 from auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, get_admin_user, generate_magic_link_token,
-    verify_token_external, MAGIC_LINK_EXPIRATION_MINUTES
+    verify_token_external, MAGIC_LINK_EXPIRATION_MINUTES,
+    create_and_store_refresh_token, validate_refresh_token, revoke_refresh_token,
+    revoke_all_user_refresh_tokens, set_refresh_token_cookie, clear_refresh_token_cookie,
+    generate_api_key, validate_api_key, hash_token
 )
-
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Identity & Employee Hub API")
+app = FastAPI(title="Identity & Employee Hub API", version="3.0.0")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
@@ -85,9 +92,14 @@ async def get_user_company_branding(user: User, db: AsyncSession) -> Optional[Co
 # ==================== AUTH ENDPOINTS ====================
 
 @api_router.post("/auth/login", response_model=TokenResponse)
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Login with email and password"""
-    result = await db.execute(select(User).where(User.email == request.email))
+async def login(
+    request: Request,
+    response: Response,
+    login_data: LoginRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Login with email and password. Sets refresh token as HttpOnly cookie."""
+    result = await db.execute(select(User).where(User.email == login_data.email))
     user = result.scalar_one_or_none()
     
     if not user or not user.password_hash:
@@ -97,7 +109,7 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     if user.auth_method == AuthMethod.AZURE_SSO:
         raise HTTPException(status_code=401, detail="This account uses Microsoft SSO. Please use 'Continue with Microsoft' to sign in.")
     
-    if not verify_password(request.password, user.password_hash):
+    if not verify_password(login_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     if user.status != UserStatus.ACTIVE:
@@ -107,15 +119,82 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
     
-    token = create_access_token(str(user.id), user.email, user.role.value)
+    # Create access token (15 min)
+    access_token = create_access_token(user)
+    
+    # Create and store refresh token (30 days), set as HttpOnly cookie
+    device_info = request.headers.get("User-Agent")
+    ip_address = request.client.host if request.client else None
+    refresh_token = await create_and_store_refresh_token(db, user, device_info, ip_address)
+    set_refresh_token_cookie(response, refresh_token)
+    
     branding = await get_user_company_branding(user, db)
     
     return TokenResponse(
-        access_token=token,
+        access_token=access_token,
         user=UserResponse.model_validate(user),
         must_change_password=user.must_change_password,
+        must_change_email=user.must_change_email,
         company=branding
     )
+
+
+@api_router.post("/auth/refresh", response_model=RefreshTokenResponse)
+async def refresh_access_token(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
+    """Refresh access token using refresh token from HttpOnly cookie."""
+    # Get refresh token from cookie
+    refresh_token_value = request.cookies.get("refresh_token")
+    
+    if not refresh_token_value:
+        raise HTTPException(status_code=401, detail="Refresh token not found")
+    
+    # Validate refresh token
+    token_record = await validate_refresh_token(db, refresh_token_value)
+    
+    if not token_record:
+        clear_refresh_token_cookie(response)
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    
+    # Get user
+    result = await db.execute(select(User).where(User.id == token_record.user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user or user.status != UserStatus.ACTIVE:
+        clear_refresh_token_cookie(response)
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    
+    # Token rotation: revoke old token and create new one
+    await revoke_refresh_token(db, refresh_token_value)
+    
+    device_info = request.headers.get("User-Agent")
+    ip_address = request.client.host if request.client else None
+    new_refresh_token = await create_and_store_refresh_token(db, user, device_info, ip_address)
+    set_refresh_token_cookie(response, new_refresh_token)
+    
+    # Create new access token
+    access_token = create_access_token(user)
+    
+    return RefreshTokenResponse(access_token=access_token)
+
+
+@api_router.post("/auth/logout")
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
+    """Logout - revokes refresh token and clears cookie."""
+    refresh_token_value = request.cookies.get("refresh_token")
+    
+    if refresh_token_value:
+        await revoke_refresh_token(db, refresh_token_value)
+    
+    clear_refresh_token_cookie(response)
+    return {"message": "Logged out successfully"}
 
 @api_router.post("/auth/change-password")
 async def change_password(
@@ -123,7 +202,7 @@ async def change_password(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Change password (required on first login for default admin)"""
+    """Change password (required on first login for bootstrap admin)"""
     # If forced change, current_password is optional
     if not current_user.must_change_password and request.current_password:
         if not verify_password(request.current_password, current_user.password_hash):
@@ -131,9 +210,65 @@ async def change_password(
     
     current_user.password_hash = hash_password(request.new_password)
     current_user.must_change_password = False
+    
+    # Revoke all existing refresh tokens (security: password changed)
+    await revoke_all_user_refresh_tokens(db, current_user.id)
+    
     await db.commit()
     
     return {"message": "Password changed successfully"}
+
+
+@api_router.post("/auth/change-credentials", response_model=TokenResponse)
+async def change_credentials(
+    request_data: ChangeCredentialsRequest,
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Change both email and password (required for bootstrap admin on first login).
+    This endpoint is used when both must_change_email and must_change_password are true.
+    """
+    if not current_user.must_change_email and not current_user.must_change_password:
+        raise HTTPException(status_code=400, detail="Credential change not required")
+    
+    # Check if new email is already taken
+    if request_data.new_email != current_user.email:
+        existing = await db.execute(select(User).where(User.email == request_data.new_email))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Update credentials
+    current_user.email = request_data.new_email
+    current_user.password_hash = hash_password(request_data.new_password)
+    current_user.must_change_email = False
+    current_user.must_change_password = False
+    
+    # Revoke all existing refresh tokens
+    await revoke_all_user_refresh_tokens(db, current_user.id)
+    
+    await db.commit()
+    await db.refresh(current_user)
+    
+    # Issue new tokens with updated credentials
+    access_token = create_access_token(current_user)
+    
+    device_info = request.headers.get("User-Agent")
+    ip_address = request.client.host if request.client else None
+    refresh_token = await create_and_store_refresh_token(db, current_user, device_info, ip_address)
+    set_refresh_token_cookie(response, refresh_token)
+    
+    branding = await get_user_company_branding(current_user, db)
+    
+    return TokenResponse(
+        access_token=access_token,
+        user=UserResponse.model_validate(current_user),
+        must_change_password=False,
+        must_change_email=False,
+        company=branding
+    )
 
 @api_router.post("/auth/magic-link")
 async def request_magic_link(request: MagicLinkRequest, db: AsyncSession = Depends(get_db)):
@@ -158,11 +293,16 @@ async def request_magic_link(request: MagicLinkRequest, db: AsyncSession = Depen
     return {"message": "If the email exists, a magic link has been sent", "debug_token": token}
 
 @api_router.post("/auth/magic-link/verify", response_model=TokenResponse)
-async def verify_magic_link(request: MagicLinkVerify, db: AsyncSession = Depends(get_db)):
+async def verify_magic_link(
+    magic_link: MagicLinkVerify,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
     """Verify magic link and login"""
     result = await db.execute(
         select(User).where(
-            User.magic_link_token == request.token,
+            User.magic_link_token == magic_link.token,
             User.magic_link_expires > datetime.now(timezone.utc)
         )
     )
@@ -176,13 +316,21 @@ async def verify_magic_link(request: MagicLinkVerify, db: AsyncSession = Depends
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
     
-    token = create_access_token(str(user.id), user.email, user.role.value)
+    # Create tokens
+    access_token = create_access_token(user)
+    
+    device_info = request.headers.get("User-Agent")
+    ip_address = request.client.host if request.client else None
+    refresh_token = await create_and_store_refresh_token(db, user, device_info, ip_address)
+    set_refresh_token_cookie(response, refresh_token)
+    
     branding = await get_user_company_branding(user, db)
     
     return TokenResponse(
-        access_token=token,
+        access_token=access_token,
         user=UserResponse.model_validate(user),
         must_change_password=user.must_change_password,
+        must_change_email=user.must_change_email,
         company=branding
     )
 
@@ -342,7 +490,7 @@ async def azure_sso_callback(
         await db.commit()
         await db.refresh(user)
         
-        token = create_access_token(str(user.id), user.email, user.role.value)
+        token = create_access_token(user)
         return RedirectResponse(url=f"{frontend_url}/login?token={token}")
         
     except Exception as e:
@@ -353,6 +501,158 @@ async def azure_sso_callback(
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current user info"""
     return UserResponse.model_validate(current_user)
+
+
+# ==================== API KEY ENDPOINTS ====================
+
+@api_router.get("/api-keys", response_model=List[APIKeyResponse])
+async def list_api_keys(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all API keys for the current user"""
+    result = await db.execute(
+        select(APIKey).where(
+            APIKey.user_id == current_user.id,
+            APIKey.revoked == False
+        ).order_by(APIKey.created_at.desc())
+    )
+    return [APIKeyResponse.model_validate(key) for key in result.scalars().all()]
+
+
+@api_router.post("/api-keys", response_model=APIKeyCreatedResponse)
+async def create_api_key(
+    key_data: APIKeyCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new API key. The full key is only returned once."""
+    # Generate the key
+    full_key, prefix = generate_api_key()
+    key_hash = hash_token(full_key)
+    
+    # Calculate expiration if specified
+    expires_at = None
+    if key_data.expires_in_days:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=key_data.expires_in_days)
+    
+    # Convert allowed_apps to JSON if provided
+    allowed_apps_json = None
+    if key_data.scope == APIKeyScopeSchema.APPS_ONLY and key_data.allowed_apps:
+        allowed_apps_json = json.dumps([str(app_id) for app_id in key_data.allowed_apps])
+    
+    api_key = APIKey(
+        user_id=current_user.id,
+        company_id=current_user.company_id,
+        name=key_data.name,
+        key_prefix=prefix,
+        key_hash=key_hash,
+        scope=APIKeyScope(key_data.scope.value),
+        allowed_apps=allowed_apps_json,
+        expires_at=expires_at
+    )
+    db.add(api_key)
+    await db.commit()
+    await db.refresh(api_key)
+    
+    # Build response manually to include the full key (only shown once)
+    return APIKeyCreatedResponse(
+        id=api_key.id,
+        name=api_key.name,
+        key_prefix=api_key.key_prefix,
+        scope=api_key.scope,
+        last_used_at=api_key.last_used_at,
+        expires_at=api_key.expires_at,
+        created_at=api_key.created_at,
+        api_key=full_key  # Only returned on creation
+    )
+
+
+@api_router.delete("/api-keys/{key_id}")
+async def revoke_api_key(
+    key_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Revoke an API key"""
+    result = await db.execute(
+        select(APIKey).where(APIKey.id == key_id, APIKey.user_id == current_user.id)
+    )
+    api_key = result.scalar_one_or_none()
+    
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    
+    api_key.revoked = True
+    api_key.revoked_at = datetime.now(timezone.utc)
+    await db.commit()
+    
+    return {"message": "API key revoked"}
+
+
+# ==================== IDENTITY CONTEXT ENDPOINTS (for downstream apps) ====================
+
+@api_router.get("/identity/context", response_model=TokenVerifyResponse)
+async def get_identity_context(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get full identity context from a token or API key.
+    Used by downstream apps to get user/company info.
+    """
+    if not credentials:
+        # Check for API key
+        return {"valid": False, "error": "No authentication provided"}
+    
+    return verify_token_external(credentials.credentials)
+
+
+@api_router.get("/identity/user/{user_id}", response_model=UserResponse)
+async def get_user_by_id_for_apps(
+    user_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get user info by ID (for downstream apps with valid token/API key).
+    Only returns users within the same company for non-sysadmins.
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check access permissions
+    if current_user.role != UserRoleEnum.SYSADMIN:
+        if user.company_id != current_user.company_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    return UserResponse.model_validate(user)
+
+
+@api_router.get("/identity/company/{company_id}", response_model=CompanyResponse)
+async def get_company_by_id_for_apps(
+    company_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get company info by ID (for downstream apps with valid token/API key).
+    """
+    # Check access permissions
+    if current_user.role != UserRoleEnum.SYSADMIN:
+        if current_user.company_id != company_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    result = await db.execute(select(Company).where(Company.id == company_id))
+    company = result.scalar_one_or_none()
+    
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    return CompanyResponse.model_validate(company)
 
 # ==================== COMPANIES (SYSADMIN ONLY) ====================
 
@@ -894,7 +1194,7 @@ async def remove_app_from_role(role_id: uuid.UUID, app_id: uuid.UUID, db: AsyncS
 
 @api_router.get("/employees", response_model=List[EmployeeResponse])
 async def list_employees(
-    status: Optional[EmployeeStatus] = None, department: Optional[str] = None, search: Optional[str] = None,
+    emp_status: Optional[EmployeeStatus] = None, department: Optional[str] = None, search: Optional[str] = None,
     db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     """List employees (filtered by company)"""
@@ -903,8 +1203,8 @@ async def list_employees(
     if current_user.role != UserRoleEnum.SYSADMIN:
         query = query.where(Employee.company_id == current_user.company_id)
     
-    if status:
-        query = query.where(Employee.status == status)
+    if emp_status:
+        query = query.where(Employee.status == emp_status)
     if department:
         query = query.where(Employee.department == department)
     if search:
@@ -1091,7 +1391,7 @@ async def update_azure_settings(azure_settings: AzureSSOSettings, db: AsyncSessi
 
 @api_router.get("/")
 async def root():
-    return {"message": "Identity & Employee Hub API", "version": "2.0.0"}
+    return {"message": "Identity & Employee Hub API", "version": "3.0.0"}
 
 @api_router.get("/health")
 async def health():
@@ -1100,41 +1400,88 @@ async def health():
 # Include router
 app.include_router(api_router)
 
-# CORS
+# CORS Configuration - Strict, env-variable driven
+cors_origins = os.environ.get('CORS_ORIGINS', '')
+if cors_origins == '*':
+    logger.warning("CORS_ORIGINS is set to '*' - this is insecure for production!")
+
+# Parse CORS origins properly
+allowed_origins = [origin.strip() for origin in cors_origins.split(',') if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins if allowed_origins else ["http://localhost:3000"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
+
+# Bootstrap admin credentials - must change both email AND password on first login
+BOOTSTRAP_ADMIN_EMAIL = "admin@bootstrap.hub"
+BOOTSTRAP_ADMIN_PASSWORD = "ChangeMeNow!"
+
+# Database initialization function using Alembic
+async def init_db_with_alembic():
+    """Initialize database using Alembic migrations"""
+    import subprocess
+    try:
+        # Run alembic upgrade head
+        result = subprocess.run(
+            ["alembic", "upgrade", "head"],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            logger.info("Database migrations applied successfully")
+        else:
+            logger.warning(f"Alembic migration warning: {result.stderr}")
+            # Fallback to create_all for development
+            from database import Base
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Fallback: Tables created with metadata.create_all")
+    except Exception as e:
+        logger.error(f"Migration error: {e}")
+        # Fallback to create_all
+        from database import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Fallback: Tables created with metadata.create_all")
 
 # Startup event
 @app.on_event("startup")
 async def startup():
-    logger.info("Starting Identity & Employee Hub...")
-    await init_db()
+    logger.info("Starting Identity & Employee Hub v3.0...")
     
-    # Seed default sysadmin if not exists
+    # Initialize database
+    await init_db_with_alembic()
+    
+    # Seed bootstrap admin if not exists
     async with async_session_maker() as session:
-        result = await session.execute(select(User).where(User.email == 'steve.harding@me.com'))
-        admin_exists = result.scalar_one_or_none()
+        # Check for any sysadmin user
+        result = await session.execute(select(User).where(User.role == UserRoleEnum.SYSADMIN))
+        existing_admin = result.scalar_one_or_none()
         
-        if not admin_exists:
-            logger.info("Creating seed sysadmin user...")
+        if not existing_admin:
+            logger.info(f"Creating bootstrap sysadmin: {BOOTSTRAP_ADMIN_EMAIL}")
             admin_user = User(
-                email='steve.harding@me.com',
-                password_hash=hash_password("ChangeMeNow!"),
-                first_name='Steve',
-                last_name='Harding',
+                email=BOOTSTRAP_ADMIN_EMAIL,
+                password_hash=hash_password(BOOTSTRAP_ADMIN_PASSWORD),
+                first_name='Admin',
+                last_name='User',
                 role=UserRoleEnum.SYSADMIN,
                 status=UserStatus.ACTIVE,
                 auth_method=AuthMethod.PASSWORD,
-                must_change_password=True  # Force password change on first login
+                must_change_password=True,  # Force password change
+                must_change_email=True       # Force email change
             )
             session.add(admin_user)
             await session.commit()
-            logger.info("Sysadmin user created: steve.harding@me.com (password change required on first login)")
+            logger.info(f"Bootstrap sysadmin created: {BOOTSTRAP_ADMIN_EMAIL}")
+            logger.info("*** IMPORTANT: Admin must change BOTH email and password on first login ***")
+        else:
+            logger.info(f"Existing sysadmin found: {existing_admin.email}")
 
 @app.on_event("shutdown")
 async def shutdown():

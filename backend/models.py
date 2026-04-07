@@ -59,6 +59,7 @@ class User(Base):
     status = Column(SQLEnum(UserStatus), default=UserStatus.ACTIVE, nullable=False)
     auth_method = Column(SQLEnum(AuthMethod), default=AuthMethod.PASSWORD, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False)  # Force password change on next login
+    must_change_email = Column(Boolean, default=False, nullable=False)  # Force email change on next login (bootstrap admin)
     azure_id = Column(String(255), unique=True, nullable=True)  # For Azure SSO
     magic_link_token = Column(String(255), nullable=True)
     magic_link_expires = Column(DateTime(timezone=True), nullable=True)
@@ -209,3 +210,52 @@ class CompanySettings(Base):
     
     # Relationships
     company = relationship("Company", back_populates="settings")
+
+
+class RefreshToken(Base):
+    """Refresh tokens for JWT authentication (30 day expiry, stored for revocation)"""
+    __tablename__ = "refresh_tokens"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(255), unique=True, nullable=False, index=True)  # Hashed token for lookup
+    device_info = Column(String(500), nullable=True)  # User agent / device info
+    ip_address = Column(String(45), nullable=True)  # IPv4/IPv6
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked = Column(Boolean, default=False, nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="refresh_tokens")
+
+
+class APIKeyScope(str, enum.Enum):
+    """API key permission scopes"""
+    GLOBAL = "global"           # Full access like the user who created it
+    READ_ONLY = "read_only"     # Read-only access to user's resources
+    APPS_ONLY = "apps_only"     # Can only access specific apps
+    VERIFY_ONLY = "verify_only" # Can only verify tokens and get user info
+
+
+class APIKey(Base):
+    """API keys for service-to-service authentication"""
+    __tablename__ = "api_keys"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
+    name = Column(String(100), nullable=False)  # Descriptive name for the key
+    key_prefix = Column(String(10), nullable=False)  # First 8 chars for identification (e.g., "idhub_xx")
+    key_hash = Column(String(255), unique=True, nullable=False, index=True)  # Hashed full key
+    scope = Column(SQLEnum(APIKeyScope), default=APIKeyScope.VERIFY_ONLY, nullable=False)
+    allowed_apps = Column(Text, nullable=True)  # JSON array of app IDs if scope is APPS_ONLY
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # Null = never expires
+    revoked = Column(Boolean, default=False, nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    
+    # Relationships
+    user = relationship("User", backref="api_keys")
+    company = relationship("Company", backref="api_keys")

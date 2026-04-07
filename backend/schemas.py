@@ -67,6 +67,15 @@ class ChangePasswordRequest(BaseModel):
     current_password: Optional[str] = None  # Not required for forced change
     new_password: str = Field(..., min_length=8)
 
+class ChangeEmailRequest(BaseModel):
+    new_email: EmailStr
+    password: str = Field(..., min_length=1)  # Required for security
+
+class ChangeCredentialsRequest(BaseModel):
+    """For forced email + password change on first login"""
+    new_email: EmailStr
+    new_password: str = Field(..., min_length=8)
+
 class MagicLinkRequest(BaseModel):
     email: EmailStr
 
@@ -78,7 +87,12 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user: "UserResponse"
     must_change_password: bool = False
+    must_change_email: bool = False
     company: Optional[CompanyBranding] = None
+
+class RefreshTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 class AzureSSOCallback(BaseModel):
     code: str
@@ -114,6 +128,7 @@ class UserResponse(BaseModel):
     status: UserStatus
     auth_method: AuthMethod
     must_change_password: bool
+    must_change_email: bool = False
     company_id: Optional[UUID]
     last_login: Optional[datetime]
     created_at: datetime
@@ -275,3 +290,44 @@ class LaunchpadResponse(BaseModel):
 UserWithApps.model_rebuild()
 RoleWithApps.model_rebuild()
 TokenResponse.model_rebuild()
+
+
+# API Key Schemas
+class APIKeyScope(str, Enum):
+    GLOBAL = "global"
+    READ_ONLY = "read_only"
+    APPS_ONLY = "apps_only"
+    VERIFY_ONLY = "verify_only"
+
+class APIKeyCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    scope: APIKeyScope = APIKeyScope.VERIFY_ONLY
+    allowed_apps: Optional[List[UUID]] = None  # Only for APPS_ONLY scope
+    expires_in_days: Optional[int] = None  # Null = never expires
+
+class APIKeyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    name: str
+    key_prefix: str
+    scope: APIKeyScope
+    last_used_at: Optional[datetime]
+    expires_at: Optional[datetime]
+    created_at: datetime
+
+class APIKeyCreatedResponse(APIKeyResponse):
+    """Response when creating a new API key - includes the full key (only shown once)"""
+    api_key: str  # Full key, only returned on creation
+
+class TokenVerifyResponse(BaseModel):
+    valid: bool
+    sub: Optional[str] = None
+    user_id: Optional[str] = None
+    email: Optional[str] = None
+    company_id: Optional[str] = None
+    roles: List[str] = []
+    permissions: List[str] = []
+    token_type: Optional[str] = None
+    exp: Optional[int] = None
+    error: Optional[str] = None
