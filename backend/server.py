@@ -1424,23 +1424,43 @@ BOOTSTRAP_ADMIN_PASSWORD = "ChangeMeNow!"
 async def init_db_with_alembic():
     """Initialize database using Alembic migrations"""
     import subprocess
+    import shutil
+    
+    # Find alembic in the virtual environment or system path
+    alembic_path = shutil.which("alembic") or "/root/.venv/bin/alembic"
+    
     try:
-        # Run alembic upgrade head
+        # Run alembic upgrade head from the backend directory
         result = subprocess.run(
-            ["alembic", "upgrade", "head"],
-            cwd=ROOT_DIR,
+            [alembic_path, "upgrade", "head"],
+            cwd=str(ROOT_DIR),
             capture_output=True,
-            text=True
+            text=True,
+            timeout=30
         )
         if result.returncode == 0:
             logger.info("Database migrations applied successfully")
+            if result.stdout:
+                logger.info(f"Migration output: {result.stdout}")
         else:
-            logger.warning(f"Alembic migration warning: {result.stderr}")
-            # Fallback to create_all for development
+            logger.warning(f"Alembic migration returned non-zero: {result.stderr}")
+            # Fallback to create_all for development if alembic fails
             from database import Base
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             logger.info("Fallback: Tables created with metadata.create_all")
+    except subprocess.TimeoutExpired:
+        logger.error("Alembic migration timed out")
+        from database import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Fallback: Tables created with metadata.create_all")
+    except FileNotFoundError:
+        logger.warning("Alembic command not found, using fallback")
+        from database import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Fallback: Tables created with metadata.create_all")
     except Exception as e:
         logger.error(f"Migration error: {e}")
         # Fallback to create_all

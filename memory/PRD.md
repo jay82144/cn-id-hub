@@ -62,6 +62,7 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - [x] Employees directory with search
 - [x] Settings page (BambooHR + Azure SSO config)
 - [x] Companies management (sysadmin only)
+- [x] API Keys management page (NEW)
 - [x] Automatic token refresh via interceptors
 
 ### Database Models
@@ -91,8 +92,9 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - [x] Bootstrap admin with forced credential change
 - [x] Strict CORS configuration
 
-### P1 (High Priority)
-- [ ] Alembic migrations (currently using fallback create_all)
+### P1 (High Priority - DONE)
+- [x] Alembic migrations (configured and working)
+- [x] API Key management UI in admin panel
 - [ ] Password reset flow via email
 - [ ] User self-service profile editing
 - [ ] Audit logging for admin actions
