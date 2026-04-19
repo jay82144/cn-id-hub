@@ -321,6 +321,11 @@ const LoginPage = () => {
               */}
             </form>
           )}
+          
+          {/* Version indicator */}
+          <div className="mt-8 text-center">
+            <span className="text-xs text-gray-400">v3.1.0</span>
+          </div>
         </div>
       </div>
 
