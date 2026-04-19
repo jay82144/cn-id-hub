@@ -1087,21 +1087,51 @@ async def init_db_with_alembic():
     alembic_path = shutil.which("alembic") or "/root/.venv/bin/alembic"
     
     try:
+        # First check current revision
+        check_result = subprocess.run(
+            [alembic_path, "current"],
+            cwd=str(ROOT_DIR),
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        current_rev = check_result.stdout.strip() if check_result.returncode == 0 else "unknown"
+        logger.info(f"Current Alembic revision: {current_rev}")
+        
+        # Run upgrade
         result = subprocess.run(
             [alembic_path, "upgrade", "head"],
             cwd=str(ROOT_DIR),
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=60
         )
+        
         if result.returncode == 0:
-            logger.info("Database migrations applied successfully")
+            logger.info(f"Database migrations applied successfully")
+            if result.stdout:
+                logger.info(f"Alembic output: {result.stdout.strip()}")
         else:
-            logger.warning(f"Alembic migration returned non-zero: {result.stderr}")
+            logger.warning(f"Alembic migration failed: {result.stderr}")
+            # Fallback to create_all only if Alembic truly failed
+            logger.info("Falling back to metadata.create_all()...")
             from database import Base
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             logger.info("Fallback: Tables created with metadata.create_all")
+            
+    except subprocess.TimeoutExpired:
+        logger.error("Alembic migration timed out")
+        from database import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Fallback: Tables created with metadata.create_all")
+    except FileNotFoundError:
+        logger.error(f"Alembic not found at {alembic_path}")
+        from database import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Fallback: Tables created with metadata.create_all")
     except Exception as e:
         logger.error(f"Migration error: {e}")
         from database import Base

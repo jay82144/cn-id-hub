@@ -131,8 +131,26 @@ The database will auto-initialize on first start with:
   - `secondary_color`
 
 ### v3.1.0 Changes
-- No schema changes (code refactoring only)
+- Fixed Alembic migration file to properly create all tables
 - New features: Audit logging (in-memory), BambooHR sync
+- Migration file `812b22b68a1c_initial_schema_with_all_tables.py` now contains full DDL
+
+### IMPORTANT: Migration Fix
+The initial migration file was empty (`pass`). It has been fixed in v3.1.0 to properly create:
+- 13 tables (companies, users, roles, apps, employees, settings, etc.)
+- 5 enum types (userrole, userstatus, authmethod, employeestatus, apikeyscope)
+- All foreign keys, indexes, and constraints
+
+If you deployed an earlier version, your tables were likely created via the `create_all()` fallback. To properly align with Alembic:
+
+```bash
+# Check if alembic_version table exists with correct revision
+psql -d identity_hub -c "SELECT * FROM alembic_version;"
+
+# If it shows 812b22b68a1c, you're good
+# If empty or missing, stamp it:
+alembic stamp 812b22b68a1c
+```
 
 ### Migration Commands Reference
 ```bash
