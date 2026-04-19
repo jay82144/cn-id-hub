@@ -33,6 +33,7 @@ import {
   Palette,
   Package,
   Globe,
+  ScrollText,
 } from 'lucide-react';
 
 const AdminLayoutContent = () => {
@@ -51,6 +52,7 @@ const AdminLayoutContent = () => {
     { path: '/admin/roles', label: 'Roles', icon: Shield },
     { path: '/admin/employees', label: 'Employees', icon: UserCircle },
     { path: '/admin/api-keys', label: 'API Keys', icon: Key },
+    { path: '/admin/audit-logs', label: 'Audit Logs', icon: ScrollText },
     { path: '/admin/settings', label: 'Settings', icon: Settings },
   ];
 

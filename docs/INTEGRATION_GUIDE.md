@@ -390,3 +390,4 @@ Sysadmins automatically see all active apps.
 | `/api/api-keys` | POST | Bearer (admin) | Create API key |
 | `/api/identity/context` | GET | Bearer | Get identity context |
 | `/api/identity/company/{id}` | GET | Bearer | Get company info |
+| `/api/admin/audit-logs` | GET | Bearer (sysadmin) | View audit logs |

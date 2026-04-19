@@ -16,6 +16,7 @@ import CompaniesPage from "@/pages/admin/CompaniesPage";
 import ApiKeysPage from "@/pages/admin/ApiKeysPage";
 import CompanyAppsPage from "@/pages/admin/CompanyAppsPage";
 import BrandingPage from "@/pages/admin/BrandingPage";
+import AuditLogsPage from "@/pages/admin/AuditLogsPage";
 
 const ProtectedRoute = ({ children, adminOnly = false }) => {
   const { user, loading, mustChangeCredentials } = useAuth();
@@ -96,6 +97,7 @@ function AppRoutes() {
         <Route path="employees" element={<EmployeesPage />} />
         <Route path="api-keys" element={<ApiKeysPage />} />
         <Route path="branding" element={<BrandingPage />} />
+        <Route path="audit-logs" element={<AuditLogsPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="/" element={<Navigate to="/launchpad" replace />} />

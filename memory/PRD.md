@@ -17,6 +17,7 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - **Auth**: JWT (15m access + 30d refresh), API keys, Azure AD SSO, Magic links
 - **Database**: PostgreSQL with Alembic migrations
 - **Email**: Resend (configurable, mock mode if no API key)
+- **Code Structure**: Modular routes in `/backend/routes/` (auth, azure_sso, api_keys, identity, email, admin)
 
 ## User Personas
 1. **Sysadmin** - Full system access, manage all companies, users, apps, settings
@@ -171,18 +172,25 @@ For fresh deployments:
 - Companies, Apps, Users, Roles, Employees, Settings - Full CRUD
 
 ## Files of Reference
-- `/app/backend/server.py` - Main API
+- `/app/backend/server.py` - Main API (refactored, ~1067 lines)
+- `/app/backend/routes/auth.py` - Authentication routes
+- `/app/backend/routes/azure_sso.py` - Azure SSO integration
+- `/app/backend/routes/api_keys.py` - API key management
+- `/app/backend/routes/identity.py` - Identity context for downstream apps
+- `/app/backend/routes/email.py` - Email service endpoints
+- `/app/backend/routes/admin.py` - Migrations, audit logs, admin functions
 - `/app/backend/auth.py` - Authentication logic
 - `/app/backend/models.py` - Database models
 - `/app/backend/schemas.py` - Pydantic schemas
-- `/app/backend/email_service.py` - Central email service (NEW)
-- `/app/backend/migration_service.py` - Schema migration tracking (NEW)
+- `/app/backend/email_service.py` - Central email service
+- `/app/backend/migration_service.py` - Schema migration tracking
 - `/app/frontend/src/context/AuthContext.js` - Auth context
-- `/app/frontend/src/context/AdminContext.js` - Admin company switcher (NEW)
+- `/app/frontend/src/context/AdminContext.js` - Admin company switcher
+- `/app/frontend/src/pages/admin/AuditLogsPage.js` - Audit logs UI
 - `/app/frontend/src/lib/api.js` - API client with refresh
 - `/app/deploy/docker-compose.yml` - Docker configuration
 - `/app/docs/INTEGRATION_GUIDE.md` - Integration documentation
-- `/app/docs/SCHEMA_MIGRATIONS.md` - Migration documentation (NEW)
+- `/app/docs/SCHEMA_MIGRATIONS.md` - Migration documentation
 
 ## Docker Deployment
 - PostgreSQL: `shared-postgres` container, `id_app` database, `id_app_user` user
