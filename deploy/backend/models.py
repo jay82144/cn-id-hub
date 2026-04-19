@@ -44,6 +44,7 @@ class Company(Base):
     employees = relationship("Employee", back_populates="company", cascade="all, delete-orphan")
     roles = relationship("Role", back_populates="company", cascade="all, delete-orphan")
     apps = relationship("App", back_populates="company")
+    company_apps = relationship("CompanyApp", back_populates="company", cascade="all, delete-orphan")
     settings = relationship("CompanySettings", back_populates="company", cascade="all, delete-orphan")
 
 class User(Base):
@@ -111,6 +112,7 @@ class App(Base):
     company = relationship("Company", back_populates="apps")
     role_apps = relationship("RoleApp", back_populates="app", cascade="all, delete-orphan")
     user_apps = relationship("UserApp", back_populates="app", cascade="all, delete-orphan")
+    company_apps = relationship("CompanyApp", back_populates="app", cascade="all, delete-orphan")
 
 class RoleApp(Base):
     """Default apps assigned to a role"""
@@ -151,6 +153,26 @@ class UserRoleAssignment(Base):
     # Relationships
     user = relationship("User", back_populates="user_roles")
     role = relationship("Role", back_populates="user_assignments")
+
+
+class CompanyApp(Base):
+    """Apps purchased/allocated to companies - companies must have an app before users can access it"""
+    __tablename__ = "company_apps"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    app_id = Column(UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)  # Can disable without removing
+    purchased_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # Null = never expires
+    
+    __table_args__ = (
+        UniqueConstraint('company_id', 'app_id', name='uq_company_app'),
+    )
+    
+    # Relationships
+    company = relationship("Company", back_populates="company_apps")
+    app = relationship("App", back_populates="company_apps")
 
 class Employee(Base):
     __tablename__ = "employees"

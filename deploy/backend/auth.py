@@ -1,8 +1,8 @@
 """
 Authentication module for Identity & Employee Hub
-Production-ready implementation with:
-- Short-lived access tokens (configurable, default 15 min)
-- Long-lived refresh tokens (configurable, default 30 days)
+Implements:
+- Short-lived access tokens (15 min)
+- Long-lived refresh tokens (30 days, stored in DB, HttpOnly cookies)
 - API key authentication for service-to-service calls
 - Bcrypt password hashing
 """
@@ -17,19 +17,24 @@ from fastapi import HTTPException, status, Depends, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from dotenv import load_dotenv
+from pathlib import Path
 
 from database import get_db
 from models import User, RefreshToken, APIKey, APIKeyScope, UserRole as UserRoleEnum
 
-# JWT settings from environment variables
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# JWT settings - strict values, no defaults that would be insecure
 JWT_SECRET = os.environ.get('JWT_SECRET')
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is required")
 
 JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get('ACCESS_TOKEN_MINUTES', '15'))
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.environ.get('REFRESH_TOKEN_DAYS', '30'))
-MAGIC_LINK_EXPIRATION_MINUTES = int(os.environ.get('MAGIC_LINK_EXPIRATION_MINUTES', '15'))
+ACCESS_TOKEN_EXPIRE_MINUTES = 15  # Short-lived access tokens
+REFRESH_TOKEN_EXPIRE_DAYS = 30    # Long-lived refresh tokens
+MAGIC_LINK_EXPIRATION_MINUTES = int(os.environ.get('MAGIC_LINK_EXPIRATION_MINUTES', 15))
 
 security = HTTPBearer(auto_error=False)
 
@@ -67,12 +72,13 @@ def generate_secure_token() -> str:
 
 def create_access_token(user: User, company_id: Optional[str] = None) -> str:
     """
-    Create a short-lived access token
+    Create a short-lived access token (15 min)
     JWT payload includes: sub, email, user_id, company_id, roles, permissions, token_type, exp
     """
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
-    roles = [user.role.value]
+    # Get user roles/permissions
+    roles = [user.role.value]  # Primary system role
     permissions = _get_user_permissions(user)
     
     payload = {
@@ -114,6 +120,7 @@ def decode_access_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         
+        # Verify it's an access token, not a refresh token
         if payload.get("token_type") != "access":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -136,7 +143,7 @@ def decode_access_token(token: str) -> dict:
 # ==================== REFRESH TOKEN ====================
 
 def create_refresh_token_value() -> str:
-    """Generate a random refresh token value"""
+    """Generate a random refresh token value (not JWT)"""
     return secrets.token_urlsafe(64)
 
 
@@ -173,6 +180,7 @@ async def validate_refresh_token(
 ) -> Optional[RefreshToken]:
     """
     Validate a refresh token by looking up its hash in the database.
+    Returns the RefreshToken record if valid, None otherwise.
     """
     token_hash = hash_token(raw_token)
     
@@ -204,7 +212,7 @@ async def revoke_refresh_token(db: AsyncSession, raw_token: str) -> bool:
 
 
 async def revoke_all_user_refresh_tokens(db: AsyncSession, user_id) -> int:
-    """Revoke all refresh tokens for a user"""
+    """Revoke all refresh tokens for a user (e.g., on password change)"""
     result = await db.execute(
         select(RefreshToken).where(
             RefreshToken.user_id == user_id,
@@ -229,16 +237,18 @@ def generate_api_key() -> Tuple[str, str]:
     """
     Generate an API key with prefix for identification.
     Returns: (full_key, prefix)
+    Example: ("idhub_xxxxxxxx....", "idhub_xx")
     """
     random_part = secrets.token_urlsafe(32)
     full_key = f"idhub_{random_part}"
-    prefix = full_key[:10]
+    prefix = full_key[:10]  # "idhub_xxxx"
     return full_key, prefix
 
 
 async def validate_api_key(db: AsyncSession, api_key: str) -> Optional[APIKey]:
     """
     Validate an API key by looking up its hash in the database.
+    Returns the APIKey record if valid, None otherwise.
     """
     key_hash = hash_token(api_key)
     
@@ -251,9 +261,11 @@ async def validate_api_key(db: AsyncSession, api_key: str) -> Optional[APIKey]:
     api_key_record = result.scalar_one_or_none()
     
     if api_key_record:
+        # Check expiration if set
         if api_key_record.expires_at and api_key_record.expires_at < datetime.now(timezone.utc):
             return None
         
+        # Update last used timestamp
         api_key_record.last_used_at = datetime.now(timezone.utc)
         await db.commit()
         
@@ -266,21 +278,23 @@ async def validate_api_key(db: AsyncSession, api_key: str) -> Optional[APIKey]:
 
 def set_refresh_token_cookie(response: Response, refresh_token: str) -> None:
     """Set refresh token as HttpOnly secure cookie"""
-    cookie_secure = os.environ.get('COOKIE_SECURE', 'true').lower() == 'true'
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=cookie_secure,
+        secure=os.environ.get('COOKIE_SECURE', 'true').lower() == 'true',
         samesite="lax",
-        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # 30 days in seconds
         path="/"
     )
 
 
 def clear_refresh_token_cookie(response: Response) -> None:
     """Clear refresh token cookie"""
-    response.delete_cookie(key="refresh_token", path="/")
+    response.delete_cookie(
+        key="refresh_token",
+        path="/"
+    )
 
 
 # ==================== AUTHENTICATION DEPENDENCIES ====================
@@ -291,12 +305,18 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
-    Get current user from Bearer token or API key.
+    Get current user from:
+    1. Bearer token in Authorization header (access token)
+    2. API key in X-API-Key header
+    
+    Returns User object if authenticated, raises 401 otherwise.
     """
+    # Try Bearer token first
     token = None
     if credentials:
         token = credentials.credentials
     
+    # Check for API key
     api_key = request.headers.get("X-API-Key")
     
     if not token and not api_key:
@@ -349,7 +369,7 @@ async def get_current_user(
 async def get_admin_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    """Require admin role"""
+    """Require admin role (sysadmin or company_admin)"""
     if current_user.role not in [UserRoleEnum.SYSADMIN, UserRoleEnum.COMPANY_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -370,6 +390,7 @@ def generate_magic_link_token() -> str:
 def verify_token_external(token: str) -> dict:
     """
     Endpoint for downstream apps to verify tokens.
+    Returns detailed token info if valid.
     """
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -385,6 +406,12 @@ def verify_token_external(token: str) -> dict:
             "exp": payload.get("exp")
         }
     except jwt.ExpiredSignatureError:
-        return {"valid": False, "error": "Token expired"}
+        return {
+            "valid": False,
+            "error": "Token expired"
+        }
     except jwt.InvalidTokenError as e:
-        return {"valid": False, "error": str(e)}
+        return {
+            "valid": False,
+            "error": str(e)
+        }

@@ -1,7 +1,7 @@
 # Identity Hub - Redeployment Guide
 
 ## Overview
-This guide explains how to redeploy the Identity Hub on top of an existing deployment that was previously pushed to GitHub.
+This guide explains how to redeploy the Identity Hub on top of an existing deployment.
 
 ---
 
@@ -20,40 +20,11 @@ cd /path/to/identity-hub
 git pull origin main
 ```
 
-### Step 2: Check for Schema Changes
-```bash
-# Connect to your backend container or server
-cd backend
-alembic current  # Shows current DB revision
-
-# Check if migrations are needed
-alembic history  # Shows all migrations
-```
-
-### Step 3: Apply Database Migrations
-```bash
-# Backup database first!
-pg_dump -h localhost -U postgres identity_hub > backup_$(date +%Y%m%d).sql
-
-# Apply migrations
-alembic upgrade head
-```
-
-### Step 4: Update Environment Variables
-Check `/deploy/.env.example` for any new required variables:
-
-```bash
-# New in v3.1.0:
-RESEND_API_KEY=           # Optional: For email service
-SENDER_EMAIL=             # Email sender address
-SENDER_NAME=Identity Hub  # Email sender name
-```
-
-### Step 5: Rebuild and Restart Containers
+### Step 2: Rebuild and Restart Containers
 ```bash
 cd deploy
 
-# Rebuild images with new code
+# Rebuild images with new code (includes updated Alembic migrations)
 docker-compose build --no-cache
 
 # Restart services
@@ -61,10 +32,16 @@ docker-compose down
 docker-compose up -d
 
 # Check logs
-docker-compose logs -f backend
+docker-compose logs -f id-backend
 ```
 
-### Step 6: Verify Deployment
+The backend entrypoint automatically:
+1. Waits for database to be ready
+2. Runs `alembic upgrade head` if `alembic.ini` is present
+3. Falls back to `create_all()` if Alembic fails
+4. Starts the uvicorn server
+
+### Step 3: Verify Deployment
 ```bash
 # Check API health
 curl https://your-domain.com/api/health
@@ -72,10 +49,6 @@ curl https://your-domain.com/api/health
 # Check version
 curl https://your-domain.com/api/
 # Should return: {"message": "Identity & Employee Hub API", "version": "3.1.0"}
-
-# Check migrations applied
-curl -X GET https://your-domain.com/api/admin/migrations \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
 ```
 
 ---
@@ -92,15 +65,15 @@ cd identity-hub
 ```bash
 cd deploy
 
-# Copy and edit environment files
-cp .env.example .env.backend
-cp .env.example .env.frontend
+# Copy environment example
+cp .env.example .env
 
-# Edit .env.backend with your values:
-# - DATABASE_URL
-# - JWT_SECRET (generate a secure random string)
-# - CORS_ORIGINS (your frontend URL)
-# - BACKEND_URL (your backend URL)
+# Edit .env with your values:
+# - POSTGRES_PASSWORD (superuser password)
+# - DB_USER, DB_PASSWORD (app user)
+# - JWT_SECRET (generate secure random: openssl rand -hex 32)
+# - ID_APP_BASE_URL (your public URL)
+# - CORS_ORIGINS (frontend URL)
 ```
 
 ### Step 3: Start Services
@@ -108,12 +81,7 @@ cp .env.example .env.frontend
 docker-compose up -d
 ```
 
-### Step 4: Initialize Database
-The database will auto-initialize on first start with:
-- Alembic migrations applied
-- Bootstrap admin created: `admin@bootstrap.hub` / `ChangeMeNow!`
-
-### Step 5: First Login
+### Step 4: First Login
 1. Navigate to `https://your-domain.com/login`
 2. Login with `admin@bootstrap.hub` / `ChangeMeNow!`
 3. **You will be forced to change both email AND password**
@@ -121,56 +89,96 @@ The database will auto-initialize on first start with:
 
 ---
 
-## Schema Changes Since v2.0
+## Database Migration Details
 
-### v3.0.0 Changes
-- Added `company_apps` table (app-to-company allocations)
-- Added branding fields to `companies` table:
-  - `logo_url`
-  - `primary_color`
-  - `secondary_color`
+### How Migrations Work in Docker
 
-### v3.1.0 Changes
-- Fixed Alembic migration file to properly create all tables
-- New features: Audit logging (in-memory), BambooHR sync
-- Migration file `812b22b68a1c_initial_schema_with_all_tables.py` now contains full DDL
+The deploy package (`/deploy/backend/`) includes:
+- `alembic.ini` - Alembic configuration
+- `alembic/env.py` - Migration environment setup
+- `alembic/versions/` - Migration files
 
-### IMPORTANT: Migration Fix
-The initial migration file was empty (`pass`). It has been fixed in v3.1.0 to properly create:
-- 13 tables (companies, users, roles, apps, employees, settings, etc.)
-- 5 enum types (userrole, userstatus, authmethod, employeestatus, apikeyscope)
-- All foreign keys, indexes, and constraints
-
-If you deployed an earlier version, your tables were likely created via the `create_all()` fallback. To properly align with Alembic:
-
+The `entrypoint.sh` script handles migrations:
 ```bash
-# Check if alembic_version table exists with correct revision
-psql -d identity_hub -c "SELECT * FROM alembic_version;"
-
-# If it shows 812b22b68a1c, you're good
-# If empty or missing, stamp it:
-alembic stamp 812b22b68a1c
+if [ -f "alembic.ini" ]; then
+    alembic upgrade head || {
+        # Fallback to create_all() if Alembic fails
+    }
+fi
 ```
 
-### Migration Commands Reference
+### Manual Migration Commands (inside container)
+
 ```bash
-# Check current state
+# Enter the backend container
+docker exec -it id-backend bash
+
+# Check current revision
 alembic current
 
-# See pending migrations
+# See migration history
 alembic history --verbose
 
-# Upgrade to latest
+# Apply all pending migrations
 alembic upgrade head
 
-# Upgrade one step at a time
+# Apply one migration at a time
 alembic upgrade +1
+```
 
-# Rollback one migration
-alembic downgrade -1
+### Schema Version History
 
-# Rollback to specific revision
-alembic downgrade abc123
+| Version | Migration | Changes |
+|---------|-----------|---------|
+| 1.0.0 | 812b22b68a1c | Initial schema: all 13 tables + 5 enum types |
+
+### Current Tables
+- `companies` - Multi-tenant companies
+- `users` - User accounts
+- `roles` - Permission roles
+- `apps` - Registered applications
+- `role_apps` - Role-to-app assignments
+- `user_apps` - User-to-app overrides
+- `user_role_assignments` - User role memberships
+- `company_apps` - App allocations to companies
+- `employees` - Employee directory
+- `settings` - Global settings
+- `company_settings` - Per-company settings
+- `refresh_tokens` - JWT refresh tokens
+- `api_keys` - API keys for service-to-service auth
+
+---
+
+## Environment Variables
+
+### Required
+```env
+# Database
+POSTGRES_PASSWORD=your_superuser_password
+DB_HOST=shared-postgres
+DB_PORT=5432
+DB_NAME=id_app
+DB_USER=id_app_user
+DB_PASSWORD=your_app_password
+
+# JWT
+JWT_SECRET=your_32_char_secret_here
+
+# URLs
+ID_APP_BASE_URL=https://your-domain.com
+CORS_ORIGINS=https://your-domain.com
+```
+
+### Optional
+```env
+# Email (Resend)
+RESEND_API_KEY=re_xxxxx
+SENDER_EMAIL=noreply@yourdomain.com
+SENDER_NAME=Identity Hub
+
+# Token expiry
+ACCESS_TOKEN_MINUTES=15
+REFRESH_TOKEN_DAYS=30
 ```
 
 ---
@@ -181,44 +189,47 @@ alembic downgrade abc123
 - [ ] Admin can login
 - [ ] Companies page loads
 - [ ] Users page loads
-- [ ] BambooHR sync works (if configured)
+- [ ] Employees page loads (BambooHR sync if configured)
 - [ ] Azure SSO works (if configured)
-- [ ] Audit logs are capturing events
 
 ---
 
 ## Troubleshooting
 
+### Backend Won't Start
+```bash
+# Check logs
+docker-compose logs id-backend
+
+# Common issues:
+# - Database not ready: Wait longer or check postgres health
+# - Missing environment variable: Check .env file
+# - Port conflict: Check if 8000 is in use
+```
+
+### Alembic Migration Errors
+```bash
+# Enter container
+docker exec -it id-backend bash
+
+# Check current state
+alembic current
+
+# If database exists but alembic_version is empty/wrong:
+alembic stamp head  # Mark as up-to-date
+
+# If need to recreate tables (WARNING: loses data)
+alembic downgrade base
+alembic upgrade head
+```
+
 ### Database Connection Failed
 ```bash
-# Check if PostgreSQL is running
-docker-compose ps
+# Check postgres is running
+docker-compose ps shared-postgres
 
-# Check database logs
-docker-compose logs postgres
-
-# Verify connection string in .env.backend
-```
-
-### Migrations Failed
-```bash
-# Check alembic error
-alembic upgrade head 2>&1
-
-# If out of sync, stamp current state
-alembic stamp head  # Only if you know DB matches code
-
-# Check alembic_version table
-psql -d identity_hub -c "SELECT * FROM alembic_version;"
-```
-
-### Frontend Can't Connect to Backend
-```bash
-# Check CORS_ORIGINS in backend .env
-# Should include your frontend URL
-
-# Check REACT_APP_BACKEND_URL in frontend .env
-# Should be the public backend URL with /api prefix
+# Test connection
+docker exec -it id-backend pg_isready -h shared-postgres -p 5432 -U id_app_user -d id_app
 ```
 
 ---
@@ -231,8 +242,8 @@ If deployment fails:
 # 1. Stop services
 docker-compose down
 
-# 2. Restore database
-psql -h localhost -U postgres identity_hub < backup_YYYYMMDD.sql
+# 2. If you have a database backup, restore it
+docker exec -i shared-postgres psql -U postgres -d id_app < backup.sql
 
 # 3. Checkout previous version
 git checkout <previous-commit-hash>
@@ -240,4 +251,31 @@ git checkout <previous-commit-hash>
 # 4. Rebuild and restart
 docker-compose build --no-cache
 docker-compose up -d
+```
+
+---
+
+## Updating Deploy Package from Source
+
+If you modify backend code in `/app/backend/`, sync to deploy:
+
+```bash
+# Sync all backend files
+cp backend/server.py deploy/backend/
+cp backend/models.py deploy/backend/
+cp backend/schemas.py deploy/backend/
+cp backend/auth.py deploy/backend/
+cp backend/database.py deploy/backend/
+cp backend/requirements.txt deploy/backend/
+cp backend/email_service.py deploy/backend/
+cp backend/bamboohr_service.py deploy/backend/
+cp backend/migration_service.py deploy/backend/
+
+# Sync routes
+cp -r backend/routes/* deploy/backend/routes/
+
+# Sync Alembic
+cp backend/alembic.ini deploy/backend/
+cp backend/alembic/env.py deploy/backend/alembic/
+cp backend/alembic/versions/*.py deploy/backend/alembic/versions/
 ```
