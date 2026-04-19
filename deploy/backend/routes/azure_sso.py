@@ -60,7 +60,7 @@ async def azure_sso_login(db: AsyncSession = Depends(get_db)):
     if not all([tenant_id, client_id, client_secret]):
         raise HTTPException(status_code=400, detail="Azure SSO is not fully configured")
     
-    backend_url = os.environ.get('BACKEND_URL', 'https://employee-hub-283.preview.emergentagent.com')
+    backend_url = os.environ.get('BACKEND_URL', 'http://localhost:8000')
     redirect_uri = f"{backend_url}/api/auth/azure/callback"
     
     try:
@@ -99,7 +99,7 @@ async def azure_sso_callback(
     from msal import ConfidentialClientApplication
     import requests
     
-    backend_url = os.environ.get('BACKEND_URL', 'https://employee-hub-283.preview.emergentagent.com')
+    backend_url = os.environ.get('BACKEND_URL', 'http://localhost:8000')
     frontend_url = backend_url
     
     if error:
