@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
 import os
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import uuid
 import json
@@ -1644,6 +1645,194 @@ async def update_azure_settings(azure_settings: AzureSSOSettings, db: AsyncSessi
     
     await db.commit()
     return {"message": "Azure SSO settings updated"}
+
+# ==================== EMAIL SERVICE ====================
+
+from email_service import (
+    send_email, send_magic_link_email, send_password_reset_email,
+    send_welcome_email, send_notification_email, EmailRequest, EmailResponse
+)
+
+class EmailSendRequest(BaseModel):
+    to: List[str]
+    subject: str
+    html: Optional[str] = None
+    text: Optional[str] = None
+    template: Optional[str] = None
+    template_data: Optional[dict] = None
+
+class EmailTemplateListResponse(BaseModel):
+    templates: List[str]
+    description: dict
+
+@api_router.post("/email/send", response_model=dict)
+async def send_email_endpoint(
+    request: EmailSendRequest,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Send an email via the central email service.
+    
+    Can be used by:
+    - Identity Hub (password resets, magic links, notifications)
+    - Downstream apps via API (requires admin permissions or API key)
+    
+    Templates available: magic_link, password_reset, welcome, notification
+    """
+    result = await send_email(
+        to=request.to,
+        subject=request.subject,
+        html=request.html,
+        text=request.text,
+        template=request.template,
+        template_data=request.template_data
+    )
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=result.message)
+    
+    return {
+        "success": result.success,
+        "message": result.message,
+        "email_id": result.email_id,
+        "mock": result.mock
+    }
+
+@api_router.get("/email/templates")
+async def list_email_templates(
+    current_user: User = Depends(get_admin_user)
+):
+    """List available email templates."""
+    return {
+        "templates": ["magic_link", "password_reset", "welcome", "notification"],
+        "description": {
+            "magic_link": "Magic link login email. Data: app_name, magic_link, expires_in",
+            "password_reset": "Password reset email. Data: app_name, reset_link, expires_in",
+            "welcome": "Welcome email for new users. Data: app_name, first_name, login_url",
+            "notification": "Generic notification. Data: app_name, title, message, action_url (optional), action_text (optional)"
+        }
+    }
+
+@api_router.get("/email/status")
+async def email_service_status(
+    current_user: User = Depends(get_admin_user)
+):
+    """Check email service configuration status."""
+    resend_configured = bool(os.environ.get('RESEND_API_KEY'))
+    return {
+        "configured": resend_configured,
+        "provider": "resend" if resend_configured else "mock",
+        "sender_email": os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev'),
+        "sender_name": os.environ.get('SENDER_NAME', 'Identity Hub'),
+        "message": "Email service is fully configured" if resend_configured else "Running in mock mode - emails will be logged but not sent"
+    }
+
+# ==================== MIGRATION & SCHEMA TRACKING ====================
+
+from migration_service import MigrationService, get_schema_changelog, get_upgrade_instructions
+
+@api_router.get("/admin/migrations")
+async def get_migration_status(
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Get current database migration status.
+    Shows all migrations and whether they are applied.
+    
+    Useful for:
+    - Checking if production database is up to date
+    - Seeing what migrations need to be applied after an upgrade
+    """
+    if current_user.role != UserRoleEnum.SYSADMIN:
+        raise HTTPException(status_code=403, detail="Only sysadmins can view migration status")
+    
+    service = MigrationService(engine)
+    return await service.get_migration_status()
+
+@api_router.get("/admin/migrations/pending")
+async def get_pending_migrations(
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Get only pending (not yet applied) migrations.
+    
+    Returns an empty list if database is up to date.
+    """
+    if current_user.role != UserRoleEnum.SYSADMIN:
+        raise HTTPException(status_code=403, detail="Only sysadmins can view migration status")
+    
+    service = MigrationService(engine)
+    pending = await service.get_pending_migrations()
+    return {
+        "pending_count": len(pending),
+        "is_up_to_date": len(pending) == 0,
+        "migrations": [m.to_dict() for m in pending]
+    }
+
+@api_router.get("/admin/schema/changelog")
+async def get_schema_changelog_endpoint(
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Get the schema version changelog.
+    
+    Documents all schema changes across versions for production upgrade planning.
+    """
+    if current_user.role != UserRoleEnum.SYSADMIN:
+        raise HTTPException(status_code=403, detail="Only sysadmins can view schema changelog")
+    
+    return {
+        "changelog": get_schema_changelog(),
+        "current_version": "3.0.0"
+    }
+
+@api_router.get("/admin/schema/upgrade-path")
+async def get_upgrade_path(
+    from_version: str = Query(..., description="Current version (e.g., '1.0.0')"),
+    to_version: str = Query(..., description="Target version (e.g., '3.0.0')"),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Get upgrade instructions from one version to another.
+    
+    Returns:
+    - All schema changes between versions
+    - Required migrations
+    - Alembic command to run
+    
+    Use this to plan production upgrades.
+    """
+    if current_user.role != UserRoleEnum.SYSADMIN:
+        raise HTTPException(status_code=403, detail="Only sysadmins can view upgrade paths")
+    
+    return get_upgrade_instructions(from_version, to_version)
+
+@api_router.post("/admin/migrations/apply")
+async def apply_pending_migrations(
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Apply all pending database migrations.
+    
+    ⚠️ WARNING: This is a dangerous operation. Only use in development or
+    during planned maintenance windows. Always backup your database first.
+    
+    For production, prefer running Alembic directly:
+    ```
+    alembic upgrade head
+    ```
+    """
+    if current_user.role != UserRoleEnum.SYSADMIN:
+        raise HTTPException(status_code=403, detail="Only sysadmins can apply migrations")
+    
+    service = MigrationService(engine)
+    result = await service.apply_migrations()
+    
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["message"])
+    
+    return result
 
 # ==================== HEALTH & ROOT ====================
 

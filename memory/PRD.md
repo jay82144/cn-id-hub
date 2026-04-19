@@ -15,11 +15,12 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - **Backend**: FastAPI (Python) + SQLAlchemy async + PostgreSQL
 - **Frontend**: React + Tailwind CSS + Shadcn/UI
 - **Auth**: JWT (15m access + 30d refresh), API keys, Azure AD SSO, Magic links
-- **Database**: PostgreSQL with Alembic migrations (fallback to create_all)
+- **Database**: PostgreSQL with Alembic migrations
+- **Email**: Resend (configurable, mock mode if no API key)
 
 ## User Personas
 1. **Sysadmin** - Full system access, manage all companies, users, apps, settings
-2. **Company Admin** - Manage users/apps within their company
+2. **Company Admin** - Manage users/apps within their company, edit company branding
 3. **Regular User** - Access launchpad, view assigned apps
 
 ## Core Requirements
@@ -30,6 +31,8 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - ✅ Smart launchpad with auto-redirect
 - ✅ Multi-tenant support with company branding
 - ✅ Platform-grade identity service with refresh tokens and API keys
+- ✅ Central email service for all apps
+- ✅ Schema migration tracking for production upgrades
 
 ## What's Been Implemented
 
@@ -48,7 +51,10 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - [x] Employees CRUD with search
 - [x] Settings management (BambooHR, Azure SSO)
 - [x] Multi-tenancy with companies
-- [x] Strict CORS configuration
+- [x] Company-App allocations (NEW)
+- [x] Company branding (logo, colors) (NEW)
+- [x] Central email service (NEW)
+- [x] Schema migration tracking (NEW)
 
 ### Frontend
 - [x] Login page (password + magic link + SSO button)
@@ -62,30 +68,28 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - [x] Employees directory with search
 - [x] Settings page (BambooHR + Azure SSO config)
 - [x] Companies management (sysadmin only)
-- [x] API Keys management page (NEW)
+- [x] API Keys management page
+- [x] Company App Allocations page (NEW)
+- [x] Company Branding page (NEW)
+- [x] Sysadmin company switcher dropdown (NEW)
 - [x] Automatic token refresh via interceptors
 
 ### Database Models
 - User, Company, App, Role, RoleApp, UserApp, UserRoleAssignment
 - Employee
 - Settings, CompanySettings
-- RefreshToken (NEW)
-- APIKey (NEW)
-
-### Docker Deployment
-- PostgreSQL: `shared-postgres` container, `id_app` database, `id_app_user` user
-- Backend: `id-backend` container
-- Frontend: `id-frontend` container
-- Networks: `app-network` (external), `app-network-internal` (database only)
+- RefreshToken
+- APIKey
+- CompanyApp (NEW)
 
 ## Current Admin Credentials
-- **Email:** `admin.final@identity.hub`
-- **Password:** `FinalSecure456!`
+- **Email:** `admin.test@identity.hub`
+- **Password:** `SecureTest123!`
 - **Role:** `sysadmin`
 
 ## Production Bootstrap Credentials
 For fresh deployments:
-- **Email:** `admin.new@local`
+- **Email:** `admin@bootstrap.hub`
 - **Password:** `ChangeMeNow!`
 - **Note:** Must change BOTH email AND password on first login
 
@@ -96,13 +100,16 @@ For fresh deployments:
 - [x] Refresh token implementation
 - [x] API key authentication
 - [x] Bootstrap admin with forced credential change
-- [x] Strict CORS configuration
+- [x] Multi-tenant app allocations
+- [x] Company branding
+- [x] Central email service
+- [x] Schema migration tracking
 
-### P1 (High Priority - DONE)
+### P1 (High Priority)
 - [x] Alembic migrations (configured and working)
 - [x] API Key management UI in admin panel
 - [x] Production Docker deployment package
-- [ ] Password reset flow via email
+- [ ] Password reset flow via email (email service ready)
 - [ ] User self-service profile editing
 - [ ] Audit logging for admin actions
 
@@ -128,6 +135,18 @@ For fresh deployments:
 - `GET /api/auth/azure/login` - Initiate Azure SSO
 - `GET /api/auth/azure/callback` - Azure SSO callback
 
+### Email Service (NEW)
+- `POST /api/email/send` - Send email (custom or template)
+- `GET /api/email/templates` - List available templates
+- `GET /api/email/status` - Check email service configuration
+
+### Schema Migrations (NEW)
+- `GET /api/admin/migrations` - Get migration status
+- `GET /api/admin/migrations/pending` - Get pending migrations
+- `GET /api/admin/schema/changelog` - Get schema version history
+- `GET /api/admin/schema/upgrade-path` - Get upgrade instructions
+- `POST /api/admin/migrations/apply` - Apply pending migrations
+
 ### API Keys
 - `GET /api/api-keys` - List user's API keys
 - `POST /api/api-keys` - Create new API key
@@ -138,14 +157,52 @@ For fresh deployments:
 - `GET /api/identity/user/{user_id}` - Get user info by ID
 - `GET /api/identity/company/{company_id}` - Get company info by ID
 
+### Company Apps (NEW)
+- `GET /api/company-apps` - List app allocations
+- `POST /api/company-apps` - Allocate app to company
+- `PUT /api/company-apps/{id}` - Update allocation
+- `DELETE /api/company-apps/{id}` - Remove allocation
+
+### Company Branding (NEW)
+- `GET /api/companies/{id}/branding` - Get company branding
+- `PUT /api/companies/my/branding` - Update own company branding
+
 ### Other Endpoints
 - Companies, Apps, Users, Roles, Employees, Settings - Full CRUD
 
 ## Files of Reference
-- `/app/backend/server.py` - Main API (1481 lines)
+- `/app/backend/server.py` - Main API
 - `/app/backend/auth.py` - Authentication logic
 - `/app/backend/models.py` - Database models
 - `/app/backend/schemas.py` - Pydantic schemas
+- `/app/backend/email_service.py` - Central email service (NEW)
+- `/app/backend/migration_service.py` - Schema migration tracking (NEW)
 - `/app/frontend/src/context/AuthContext.js` - Auth context
+- `/app/frontend/src/context/AdminContext.js` - Admin company switcher (NEW)
 - `/app/frontend/src/lib/api.js` - API client with refresh
 - `/app/deploy/docker-compose.yml` - Docker configuration
+- `/app/docs/INTEGRATION_GUIDE.md` - Integration documentation
+- `/app/docs/SCHEMA_MIGRATIONS.md` - Migration documentation (NEW)
+
+## Docker Deployment
+- PostgreSQL: `shared-postgres` container, `id_app` database, `id_app_user` user
+- Backend: `id-backend` container
+- Frontend: `id-frontend` container
+- Networks: `app-network` (external), `app-network-internal` (database only)
+
+## Environment Variables
+
+### Backend (.env)
+- `DATABASE_URL` - PostgreSQL connection string
+- `JWT_SECRET` - Secret for JWT signing
+- `JWT_ALGORITHM` - Algorithm (HS256)
+- `MAGIC_LINK_EXPIRATION_MINUTES` - Magic link expiry
+- `BACKEND_URL` - Public backend URL
+- `CORS_ORIGINS` - Allowed CORS origins
+- `COOKIE_SECURE` - Secure cookie flag
+- `RESEND_API_KEY` - Resend API key for emails (optional)
+- `SENDER_EMAIL` - Email sender address
+- `SENDER_NAME` - Email sender name
+
+### Frontend (.env)
+- `REACT_APP_BACKEND_URL` - Backend API URL

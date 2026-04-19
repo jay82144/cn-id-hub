@@ -9,8 +9,9 @@ Use this guide when asking AI to integrate apps with the Identity & Employee Hub
 | Item | Value |
 |------|-------|
 | **Hub URL** | `https://employee-hub-283.preview.emergentagent.com` |
-| **Admin Email** | steve.harding@me.com |
-| **Admin Password** | ChangeMeNow! |
+| **Version** | 3.0.0 |
+| **Admin Email** | admin.test@identity.hub |
+| **Admin Password** | SecureTest123! |
 
 ---
 
@@ -44,6 +45,9 @@ Authorization: Bearer {token}
   "user_id": "uuid-here",
   "email": "user@company.com",
   "role": "user|admin",
+  "company_id": "company-uuid",
+  "roles": ["user"],
+  "permissions": ["read:profile"],
   "exp": 1234567890
 }
 ```
@@ -72,6 +76,8 @@ Authorization: Bearer {token}
   "last_name": "Doe",
   "role": "user",
   "status": "active",
+  "company_id": "company-uuid",
+  "company_name": "Acme Corp",
   "last_login": "2024-01-15T10:30:00Z",
   "created_at": "2024-01-01T00:00:00Z"
 }
@@ -80,11 +86,99 @@ Authorization: Bearer {token}
 ### 5. Frontend Token Handling
 - Store JWT in `localStorage` under key `token`
 - Include in all API requests: `Authorization: Bearer {token}`
-- On 401 response, redirect to Hub login
+- On 401 response, try refresh token first, then redirect to Hub login
+- Access tokens expire in 15 minutes, refresh tokens in 30 days
+
+### 6. Token Refresh
+```http
+POST {HUB_URL}/api/auth/refresh
+Cookie: refresh_token=<token>
+```
+
+Returns a new access token if the refresh token is valid.
 
 ---
 
-## B) Employee Data Integration
+## B) Central Email Service
+
+**Use the Hub's email service for sending transactional emails from your app:**
+
+### Send Custom Email
+```http
+POST {HUB_URL}/api/email/send
+Authorization: Bearer {admin_token}
+Content-Type: application/json
+
+{
+  "to": ["user@example.com"],
+  "subject": "Email Subject",
+  "html": "<h1>Email content</h1>"
+}
+```
+
+### Send Using Templates
+```http
+POST {HUB_URL}/api/email/send
+Authorization: Bearer {admin_token}
+Content-Type: application/json
+
+{
+  "to": ["user@example.com"],
+  "subject": "Welcome!",
+  "template": "notification",
+  "template_data": {
+    "app_name": "Your App",
+    "title": "Welcome!",
+    "message": "Thanks for signing up.",
+    "action_url": "https://yourapp.com/dashboard",
+    "action_text": "Go to Dashboard"
+  }
+}
+```
+
+### Available Templates
+| Template | Data Fields |
+|----------|-------------|
+| `magic_link` | app_name, magic_link, expires_in |
+| `password_reset` | app_name, reset_link, expires_in |
+| `welcome` | app_name, first_name, login_url |
+| `notification` | app_name, title, message, action_url (opt), action_text (opt) |
+
+### Check Email Service Status
+```http
+GET {HUB_URL}/api/email/status
+Authorization: Bearer {admin_token}
+```
+
+---
+
+## C) API Keys for Service-to-Service
+
+**For backend apps that need to call Hub APIs without user context:**
+
+### Create API Key (Admin)
+```http
+POST {HUB_URL}/api/api-keys
+Authorization: Bearer {admin_token}
+Content-Type: application/json
+
+{
+  "name": "My App Backend",
+  "scope": "read_users"
+}
+```
+
+**Scopes:** `full_access`, `read_users`, `read_employees`, `verify_only`
+
+### Use API Key
+```http
+GET {HUB_URL}/api/auth/me
+X-API-Key: idhub_xxxxxxxxxxxxxxxx
+```
+
+---
+
+## D) Employee Data Integration
 
 **To fetch employee/user data from the Hub:**
 
@@ -106,6 +200,8 @@ Authorization: Bearer {token}
 {
   "id": "uuid",
   "user_id": "uuid (if linked to user account)",
+  "company_id": "uuid of employee's company",
+  "company_name": "Acme Corp",
   "bamboo_id": "external ID from BambooHR",
   "email": "employee@company.com",
   "first_name": "John",
@@ -122,32 +218,109 @@ Authorization: Bearer {token}
 }
 ```
 
-### Get Single Employee
+---
+
+## E) Multi-Tenant Support
+
+The Hub supports multi-tenant deployments where apps can be allocated to specific companies.
+
+### Get Company Info
 ```http
-GET {HUB_URL}/api/employees/{employee_id}
+GET {HUB_URL}/api/identity/company/{company_id}
 Authorization: Bearer {token}
+```
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "name": "Acme Corp",
+  "slug": "acme-corp",
+  "logo_url": "https://example.com/logo.png",
+  "primary_color": "#0A0A0A",
+  "secondary_color": "#0047FF",
+  "is_active": true
+}
+```
+
+### Company Branding
+Apps can use company branding colors for white-labeling:
+- `primary_color` - Main brand color (buttons, headers)
+- `secondary_color` - Accent color (highlights, links)
+- `logo_url` - Company logo for headers
+
+---
+
+## F) Schema Migrations (For Production)
+
+**Track and manage database schema changes:**
+
+### Check Migration Status
+```http
+GET {HUB_URL}/api/admin/migrations
+Authorization: Bearer {sysadmin_token}
+```
+
+**Response:**
+```json
+{
+  "current_revision": "812b22b68a1c",
+  "is_up_to_date": true,
+  "pending_count": 0,
+  "applied_migrations": [...],
+  "pending_migrations": []
+}
+```
+
+### Get Upgrade Path
+```http
+GET {HUB_URL}/api/admin/schema/upgrade-path?from_version=1.0.0&to_version=3.0.0
+Authorization: Bearer {sysadmin_token}
+```
+
+**Response:**
+```json
+{
+  "from_version": "1.0.0",
+  "to_version": "3.0.0",
+  "changes": [
+    "Added refresh_tokens table",
+    "Added api_keys table",
+    ...
+  ],
+  "migrations_needed": ["002", "003"],
+  "alembic_command": "alembic upgrade 003"
+}
+```
+
+### Schema Changelog
+```http
+GET {HUB_URL}/api/admin/schema/changelog
+Authorization: Bearer {sysadmin_token}
 ```
 
 ---
 
-## C) Register Your App in the Hub
+## G) Register Your App in the Hub
 
 After building your app, register it so users can access it from the launchpad:
 
-1. Login to Hub as admin (steve.harding@me.com)
-2. Go to **Admin Panel** → **Apps**
+1. Login to Hub as admin
+2. Go to **Admin Panel** → **Apps Catalog**
 3. Click **Add App**
 4. Fill in:
    - **Name**: Your app name
    - **URL**: Full URL to your app
    - **Icon**: Choose from available icons
    - **Description**: Brief description
+   - **Is Global**: If true, available to all companies
 5. Save
-6. Go to **Roles** to assign the app to roles, or **Users** to assign to specific users
+6. If not global, go to **App Allocations** to assign the app to specific companies
+7. Go to **Roles** to assign the app to roles, or **Users** to assign to specific users
 
 ---
 
-## D) Example Prompts for AI
+## H) Example Prompts for AI
 
 ### For Building New Apps
 ```
@@ -158,64 +331,62 @@ Use the Identity Hub at https://employee-hub-283.preview.emergentagent.com for a
 - Validate tokens via GET /api/auth/verify
 - Fetch current user from GET /api/auth/me
 - For employee data, call GET /api/employees
+- Use Hub's email service for transactional emails
 
-Hub admin: steve.harding@me.com / ChangeMeNow!
+Hub admin: admin.test@identity.hub / SecureTest123!
 ```
 
-### For Adapting Existing Apps
+### For Apps Needing Email
 ```
-Adapt [APP NAME] to use the Identity Hub at https://employee-hub-283.preview.emergentagent.com
-
-Changes needed:
-- Remove local user table and auth system
-- Remove login/registration pages
-- Replace JWT validation with calls to Hub's /api/auth/verify
-- Fetch user info from Hub's /api/auth/me instead of local DB
-- Redirect unauthenticated users to Hub login
-
-Hub admin: steve.harding@me.com / ChangeMeNow!
-```
-
-### For Apps Needing Employee Data
-```
-Build [APP NAME] that uses employee data from the Identity Hub.
+Build [APP NAME] that sends email notifications via the Identity Hub.
 
 - Hub URL: https://employee-hub-283.preview.emergentagent.com
-- Fetch employees from GET /api/employees
-- Available fields: first_name, last_name, email, department, division, team, job_title, location, manager_id, hire_date, status
-- Use Hub for auth (no local auth)
+- Send emails via POST /api/email/send
+- Use templates: notification, welcome, or custom HTML
+- Hub admin: admin.test@identity.hub / SecureTest123!
 ```
 
 ---
 
-## E) Technical Notes
+## I) Technical Notes
 
 ### CORS
 The Hub allows cross-origin requests. Your app can call Hub APIs directly from the frontend.
 
 ### Token Expiration
-JWT tokens expire after 24 hours. Handle 401 responses by redirecting to Hub login.
+- Access tokens: 15 minutes
+- Refresh tokens: 30 days
+Handle 401 responses by trying refresh first, then redirecting to Hub login.
 
 ### User Roles
-- `admin` - Full access to Hub admin panel and all apps
+- `sysadmin` - Full system access, manage all companies
+- `company_admin` - Manage users/apps within their company
 - `user` - Access only to assigned apps
 
 ### App Access Control
 Users see apps based on:
-1. **Role defaults** - Apps assigned to their role(s)
-2. **User overrides** - Apps explicitly granted/revoked for that user
+1. **Company allocation** - App must be allocated to user's company
+2. **Role defaults** - Apps assigned to their role(s)
+3. **User overrides** - Apps explicitly granted/revoked for that user
 
-Admins automatically see all active apps.
+Sysadmins automatically see all active apps.
 
 ---
 
-## F) API Quick Reference
+## J) API Quick Reference
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/api/auth/verify` | GET | Bearer | Validate JWT token |
-| `/api/auth/me` | GET | Bearer | Get current user |
+| `/api/auth/me` | GET | Bearer/API-Key | Get current user |
+| `/api/auth/refresh` | POST | Cookie | Refresh access token |
+| `/api/auth/logout` | POST | Bearer | Logout and revoke tokens |
 | `/api/employees` | GET | Bearer | List employees |
 | `/api/employees/{id}` | GET | Bearer | Get single employee |
-| `/api/apps` | GET | Bearer | List apps (for reference) |
-| `/api/roles` | GET | Bearer | List roles (for reference) |
+| `/api/email/send` | POST | Bearer (admin) | Send email |
+| `/api/email/status` | GET | Bearer (admin) | Email service status |
+| `/api/admin/migrations` | GET | Bearer (sysadmin) | Migration status |
+| `/api/admin/schema/changelog` | GET | Bearer (sysadmin) | Schema changelog |
+| `/api/api-keys` | POST | Bearer (admin) | Create API key |
+| `/api/identity/context` | GET | Bearer | Get identity context |
+| `/api/identity/company/{id}` | GET | Bearer | Get company info |
