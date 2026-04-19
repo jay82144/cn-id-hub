@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
+import { useAdmin } from '@/context/AdminContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,10 +31,12 @@ import {
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Loader2, UserCircle, Search, CalendarIcon } from 'lucide-react';
+import { Plus, Pencil, Trash2, Loader2, UserCircle, Search, CalendarIcon, Building2 } from 'lucide-react';
 import { format } from 'date-fns';
 
 const EmployeesPage = () => {
+  const { isSysadmin } = useAuth();
+  const { selectedCompanyId, getCompanyFilter } = useAdmin();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -54,13 +58,14 @@ const EmployeesPage = () => {
 
   useEffect(() => {
     fetchEmployees();
-  }, []);
+  }, [selectedCompanyId]);
 
   const fetchEmployees = async (search = '') => {
     setLoading(true);
     try {
-      const params = search ? `?search=${encodeURIComponent(search)}` : '';
-      const response = await api.get(`/employees${params}`);
+      const params = { ...getCompanyFilter() };
+      if (search) params.search = search;
+      const response = await api.get('/employees', { params });
       setEmployees(response.data);
     } catch (error) {
       toast.error('Failed to load employees');

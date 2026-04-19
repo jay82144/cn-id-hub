@@ -130,6 +130,7 @@ class UserResponse(BaseModel):
     must_change_password: bool
     must_change_email: bool = False
     company_id: Optional[UUID]
+    company_name: Optional[str] = None  # For sysadmin views
     last_login: Optional[datetime]
     created_at: datetime
 
@@ -224,6 +225,7 @@ class EmployeeResponse(BaseModel):
     
     id: UUID
     company_id: UUID
+    company_name: Optional[str] = None  # For sysadmin views
     user_id: Optional[UUID]
     bamboo_id: Optional[str]
     first_name: str
@@ -331,3 +333,37 @@ class TokenVerifyResponse(BaseModel):
     token_type: Optional[str] = None
     exp: Optional[int] = None
     error: Optional[str] = None
+
+
+# Company App Schemas (Apps purchased/allocated to companies)
+class CompanyAppCreate(BaseModel):
+    company_id: UUID
+    app_id: UUID
+    expires_at: Optional[datetime] = None
+
+class CompanyAppUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    expires_at: Optional[datetime] = None
+
+class CompanyAppResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    company_id: UUID
+    app_id: UUID
+    is_active: bool
+    purchased_at: datetime
+    expires_at: Optional[datetime]
+
+class CompanyAppWithDetails(CompanyAppResponse):
+    """Company app with expanded company and app details"""
+    company_name: Optional[str] = None
+    app_name: Optional[str] = None
+    app_icon: Optional[str] = None
+
+
+# Company Branding Update (for company admins)
+class CompanyBrandingUpdate(BaseModel):
+    logo_url: Optional[str] = None
+    primary_color: Optional[str] = Field(None, pattern=r'^#[0-9A-Fa-f]{6}$')
+    secondary_color: Optional[str] = Field(None, pattern=r'^#[0-9A-Fa-f]{6}$')

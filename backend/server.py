@@ -20,7 +20,8 @@ load_dotenv(ROOT_DIR / '.env')
 from database import get_db, engine, async_session_maker
 from models import (
     User, Role, App, RoleApp, UserApp, UserRoleAssignment, Employee, Settings, CompanySettings, Company,
-    UserRole as UserRoleEnum, UserStatus, EmployeeStatus, AuthMethod, RefreshToken, APIKey, APIKeyScope
+    UserRole as UserRoleEnum, UserStatus, EmployeeStatus, AuthMethod, RefreshToken, APIKey, APIKeyScope,
+    CompanyApp
 )
 from schemas import (
     LoginRequest, MagicLinkRequest, MagicLinkVerify, TokenResponse, ChangePasswordRequest,
@@ -33,7 +34,8 @@ from schemas import (
     RoleAppAssignment, UserAppAssignment, UserRoleAssignmentSchema,
     LaunchpadResponse, CompanyCreate, CompanyUpdate, CompanyResponse, CompanyBranding,
     APIKeyCreate, APIKeyResponse, APIKeyCreatedResponse, TokenVerifyResponse,
-    APIKeyScope as APIKeyScopeSchema
+    APIKeyScope as APIKeyScopeSchema,
+    CompanyAppCreate, CompanyAppUpdate, CompanyAppResponse, CompanyAppWithDetails, CompanyBrandingUpdate
 )
 from auth import (
     hash_password, verify_password, create_access_token,
@@ -730,11 +732,205 @@ async def get_company_branding(company_id: uuid.UUID, db: AsyncSession = Depends
         raise HTTPException(status_code=404, detail="Company not found")
     return CompanyBranding(name=company.name, logo_url=company.logo_url, primary_color=company.primary_color, secondary_color=company.secondary_color)
 
+
+@api_router.put("/companies/my/branding", response_model=CompanyResponse)
+async def update_my_company_branding(
+    data: CompanyBrandingUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_company_admin_or_above)
+):
+    """Company admin can update their own company's branding (logo, colors)"""
+    if not admin.company_id:
+        raise HTTPException(status_code=400, detail="You are not associated with a company")
+    
+    result = await db.execute(select(Company).where(Company.id == admin.company_id))
+    company = result.scalar_one_or_none()
+    
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    if data.logo_url is not None:
+        company.logo_url = data.logo_url
+    if data.primary_color is not None:
+        company.primary_color = data.primary_color
+    if data.secondary_color is not None:
+        company.secondary_color = data.secondary_color
+    
+    await db.commit()
+    await db.refresh(company)
+    return CompanyResponse.model_validate(company)
+
+
+# ==================== COMPANY APPS (Apps allocated to companies) ====================
+
+@api_router.get("/company-apps", response_model=List[CompanyAppWithDetails])
+async def list_company_apps(
+    company_id: Optional[uuid.UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_sysadmin)
+):
+    """List all company-app allocations (sysadmin only)"""
+    query = select(CompanyApp).options(
+        selectinload(CompanyApp.company),
+        selectinload(CompanyApp.app)
+    )
+    
+    if company_id:
+        query = query.where(CompanyApp.company_id == company_id)
+    
+    result = await db.execute(query.order_by(CompanyApp.purchased_at.desc()))
+    company_apps = result.scalars().all()
+    
+    return [
+        CompanyAppWithDetails(
+            id=ca.id,
+            company_id=ca.company_id,
+            app_id=ca.app_id,
+            is_active=ca.is_active,
+            purchased_at=ca.purchased_at,
+            expires_at=ca.expires_at,
+            company_name=ca.company.name if ca.company else None,
+            app_name=ca.app.name if ca.app else None,
+            app_icon=ca.app.icon if ca.app else None
+        )
+        for ca in company_apps
+    ]
+
+
+@api_router.post("/company-apps", response_model=CompanyAppResponse)
+async def allocate_app_to_company(
+    data: CompanyAppCreate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_sysadmin)
+):
+    """Allocate an app to a company (sysadmin only)"""
+    # Verify company exists
+    company_result = await db.execute(select(Company).where(Company.id == data.company_id))
+    if not company_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    # Verify app exists
+    app_result = await db.execute(select(App).where(App.id == data.app_id))
+    if not app_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="App not found")
+    
+    # Check if allocation already exists
+    existing = await db.execute(
+        select(CompanyApp).where(
+            CompanyApp.company_id == data.company_id,
+            CompanyApp.app_id == data.app_id
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="App is already allocated to this company")
+    
+    company_app = CompanyApp(
+        company_id=data.company_id,
+        app_id=data.app_id,
+        expires_at=data.expires_at
+    )
+    db.add(company_app)
+    await db.commit()
+    await db.refresh(company_app)
+    
+    return CompanyAppResponse.model_validate(company_app)
+
+
+@api_router.put("/company-apps/{allocation_id}", response_model=CompanyAppResponse)
+async def update_company_app_allocation(
+    allocation_id: uuid.UUID,
+    data: CompanyAppUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_sysadmin)
+):
+    """Update a company-app allocation (sysadmin only)"""
+    result = await db.execute(select(CompanyApp).where(CompanyApp.id == allocation_id))
+    company_app = result.scalar_one_or_none()
+    
+    if not company_app:
+        raise HTTPException(status_code=404, detail="Allocation not found")
+    
+    if data.is_active is not None:
+        company_app.is_active = data.is_active
+    if data.expires_at is not None:
+        company_app.expires_at = data.expires_at
+    
+    await db.commit()
+    await db.refresh(company_app)
+    return CompanyAppResponse.model_validate(company_app)
+
+
+@api_router.delete("/company-apps/{allocation_id}")
+async def remove_app_from_company(
+    allocation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_sysadmin)
+):
+    """Remove an app allocation from a company (sysadmin only)"""
+    result = await db.execute(select(CompanyApp).where(CompanyApp.id == allocation_id))
+    company_app = result.scalar_one_or_none()
+    
+    if not company_app:
+        raise HTTPException(status_code=404, detail="Allocation not found")
+    
+    await db.delete(company_app)
+    await db.commit()
+    return {"message": "App allocation removed"}
+
+
+@api_router.get("/companies/{company_id}/apps", response_model=List[AppResponse])
+async def get_company_allocated_apps(
+    company_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_company_admin_or_above)
+):
+    """Get apps allocated to a specific company"""
+    # Check access
+    if admin.role != UserRoleEnum.SYSADMIN and admin.company_id != company_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    result = await db.execute(
+        select(App).join(CompanyApp).where(
+            CompanyApp.company_id == company_id,
+            CompanyApp.is_active == True,
+            App.is_active == True
+        )
+    )
+    apps = result.scalars().all()
+    
+    # Also include global apps
+    global_result = await db.execute(select(App).where(App.is_global == True, App.is_active == True))
+    global_apps = global_result.scalars().all()
+    
+    all_apps = {app.id: app for app in apps}
+    for app in global_apps:
+        all_apps[app.id] = app
+    
+    return [AppResponse.model_validate(app) for app in all_apps.values()]
+
 # ==================== LAUNCHPAD ENDPOINT ====================
 
 @api_router.get("/launchpad", response_model=LaunchpadResponse)
 async def get_launchpad(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Get user's launchpad with accessible apps"""
+    
+    # Get apps allocated to user's company (or global apps)
+    company_app_ids = set()
+    if current_user.company_id:
+        ca_result = await db.execute(
+            select(CompanyApp.app_id).where(
+                CompanyApp.company_id == current_user.company_id,
+                CompanyApp.is_active == True
+            )
+        )
+        company_app_ids = {row[0] for row in ca_result.fetchall()}
+    
+    # Helper to check if app is accessible to company
+    def is_app_accessible(app):
+        if app.is_global:
+            return True
+        return app.id in company_app_ids
+    
     # Get user's role assignments
     role_result = await db.execute(
         select(UserRoleAssignment)
@@ -746,10 +942,8 @@ async def get_launchpad(current_user: User = Depends(get_current_user), db: Asyn
     role_apps = {}
     for ura in user_role_assignments:
         for ra in ura.role.role_apps:
-            if ra.app.is_active:
-                # Filter by company
-                if ra.app.is_global or ra.app.company_id == current_user.company_id:
-                    role_apps[ra.app.id] = ra.app
+            if ra.app.is_active and is_app_accessible(ra.app):
+                role_apps[ra.app.id] = ra.app
     
     user_app_result = await db.execute(
         select(UserApp).options(selectinload(UserApp.app)).where(UserApp.user_id == current_user.id)
@@ -758,21 +952,24 @@ async def get_launchpad(current_user: User = Depends(get_current_user), db: Asyn
     
     final_apps = dict(role_apps)
     for ua in user_apps:
-        if ua.is_granted and ua.app.is_active:
-            if ua.app.is_global or ua.app.company_id == current_user.company_id:
-                final_apps[ua.app.id] = ua.app
+        if ua.is_granted and ua.app.is_active and is_app_accessible(ua.app):
+            final_apps[ua.app.id] = ua.app
         elif not ua.is_granted and ua.app.id in final_apps:
             del final_apps[ua.app.id]
     
     apps_list = [AppResponse.model_validate(app) for app in final_apps.values()]
     
-    # Admins see all apps in their scope
+    # Admins see all apps allocated to their company (or all for sysadmin)
     if current_user.role in [UserRoleEnum.SYSADMIN, UserRoleEnum.COMPANY_ADMIN]:
         if current_user.role == UserRoleEnum.SYSADMIN:
             all_apps_result = await db.execute(select(App).where(App.is_active == True))
         else:
+            # Company admin sees global apps + apps allocated to their company
             all_apps_result = await db.execute(
-                select(App).where(App.is_active == True, or_(App.is_global == True, App.company_id == current_user.company_id))
+                select(App).where(
+                    App.is_active == True,
+                    or_(App.is_global == True, App.id.in_(company_app_ids))
+                )
             )
         all_apps = all_apps_result.scalars().all()
         apps_list = [AppResponse.model_validate(app) for app in all_apps]
@@ -873,13 +1070,40 @@ async def delete_app(app_id: uuid.UUID, db: AsyncSession = Depends(get_db), admi
 # ==================== USERS CRUD ====================
 
 @api_router.get("/users", response_model=List[UserResponse])
-async def list_users(db: AsyncSession = Depends(get_db), admin: User = Depends(get_company_admin_or_above)):
-    """List users (filtered by company for company_admin)"""
+async def list_users(
+    company_id: Optional[uuid.UUID] = Query(None, description="Filter by company (sysadmin only)"),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_company_admin_or_above)
+):
+    """List users (filtered by company for company_admin, with optional filter for sysadmin)"""
     if admin.role == UserRoleEnum.SYSADMIN:
-        result = await db.execute(select(User).order_by(User.email))
+        query = select(User).options(selectinload(User.company))
+        if company_id:
+            query = query.where(User.company_id == company_id)
+        result = await db.execute(query.order_by(User.email))
+        users = result.scalars().all()
+        # Include company name for sysadmin
+        return [
+            UserResponse(
+                id=user.id,
+                email=user.email,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                role=user.role,
+                status=user.status,
+                auth_method=user.auth_method,
+                must_change_password=user.must_change_password,
+                must_change_email=user.must_change_email,
+                company_id=user.company_id,
+                company_name=user.company.name if user.company else None,
+                last_login=user.last_login,
+                created_at=user.created_at
+            )
+            for user in users
+        ]
     else:
         result = await db.execute(select(User).where(User.company_id == admin.company_id).order_by(User.email))
-    return [UserResponse.model_validate(user) for user in result.scalars().all()]
+        return [UserResponse.model_validate(user) for user in result.scalars().all()]
 
 @api_router.post("/users", response_model=UserResponse)
 async def create_user(user_data: UserCreate, db: AsyncSession = Depends(get_db), admin: User = Depends(get_company_admin_or_above)):
@@ -1194,14 +1418,21 @@ async def remove_app_from_role(role_id: uuid.UUID, app_id: uuid.UUID, db: AsyncS
 
 @api_router.get("/employees", response_model=List[EmployeeResponse])
 async def list_employees(
-    emp_status: Optional[EmployeeStatus] = None, department: Optional[str] = None, search: Optional[str] = None,
-    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+    emp_status: Optional[EmployeeStatus] = None,
+    department: Optional[str] = None,
+    search: Optional[str] = None,
+    company_id: Optional[uuid.UUID] = Query(None, description="Filter by company (sysadmin only)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """List employees (filtered by company)"""
-    query = select(Employee)
+    query = select(Employee).options(selectinload(Employee.company))
     
     if current_user.role != UserRoleEnum.SYSADMIN:
         query = query.where(Employee.company_id == current_user.company_id)
+    elif company_id:
+        # Sysadmin can filter by specific company
+        query = query.where(Employee.company_id == company_id)
     
     if emp_status:
         query = query.where(Employee.status == emp_status)
@@ -1216,7 +1447,34 @@ async def list_employees(
         ))
     
     result = await db.execute(query.order_by(Employee.last_name, Employee.first_name))
-    return [EmployeeResponse.model_validate(emp) for emp in result.scalars().all()]
+    employees = result.scalars().all()
+    
+    # Include company name for sysadmin
+    if current_user.role == UserRoleEnum.SYSADMIN:
+        return [
+            EmployeeResponse(
+                id=emp.id,
+                company_id=emp.company_id,
+                company_name=emp.company.name if emp.company else None,
+                user_id=emp.user_id,
+                bamboo_id=emp.bamboo_id,
+                first_name=emp.first_name,
+                last_name=emp.last_name,
+                email=emp.email,
+                department=emp.department,
+                division=emp.division,
+                team=emp.team,
+                job_title=emp.job_title,
+                location=emp.location,
+                manager_id=emp.manager_id,
+                hire_date=emp.hire_date,
+                status=emp.status,
+                created_at=emp.created_at
+            )
+            for emp in employees
+        ]
+    
+    return [EmployeeResponse.model_validate(emp) for emp in employees]
 
 @api_router.post("/employees", response_model=EmployeeResponse)
 async def create_employee(emp_data: EmployeeCreate, db: AsyncSession = Depends(get_db), admin: User = Depends(get_company_admin_or_above)):

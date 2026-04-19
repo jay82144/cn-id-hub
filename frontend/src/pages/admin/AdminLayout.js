@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { AdminProvider, useAdmin } from '@/context/AdminContext';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -8,6 +9,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { toast } from 'sonner';
 import {
   Boxes,
@@ -22,23 +30,38 @@ import {
   ArrowLeft,
   Building2,
   Key,
+  Palette,
+  Package,
+  Globe,
 } from 'lucide-react';
 
-const AdminLayout = () => {
+const AdminLayoutContent = () => {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, isSysadmin } = useAuth();
+  const { companies, selectedCompanyId, selectCompany, clearCompanyFilter } = useAdmin();
   
-  const isSysadmin = user?.role === 'sysadmin';
+  const isCompanyAdmin = user?.role === 'company_admin';
 
-  const navItems = [
-    ...(isSysadmin ? [{ path: '/admin/companies', label: 'Companies', icon: Building2 }] : []),
-    { path: '/admin/apps', label: 'Apps', icon: LayoutGrid },
+  // Different nav items based on role
+  const sysadminNavItems = [
+    { path: '/admin/companies', label: 'Companies', icon: Building2 },
+    { path: '/admin/company-apps', label: 'App Allocations', icon: Package },
+    { path: '/admin/apps', label: 'Apps Catalog', icon: LayoutGrid },
     { path: '/admin/users', label: 'Users', icon: Users },
     { path: '/admin/roles', label: 'Roles', icon: Shield },
     { path: '/admin/employees', label: 'Employees', icon: UserCircle },
     { path: '/admin/api-keys', label: 'API Keys', icon: Key },
     { path: '/admin/settings', label: 'Settings', icon: Settings },
   ];
+
+  const companyAdminNavItems = [
+    { path: '/admin/users', label: 'Users', icon: Users },
+    { path: '/admin/employees', label: 'Employees', icon: UserCircle },
+    { path: '/admin/branding', label: 'Branding', icon: Palette },
+    { path: '/admin/settings', label: 'Settings', icon: Settings },
+  ];
+
+  const navItems = isSysadmin ? sysadminNavItems : companyAdminNavItems;
 
   const handleLogout = () => {
     logout();
@@ -67,6 +90,46 @@ const AdminLayout = () => {
               </div>
               <span className="font-semibold text-gray-900">Admin Panel</span>
             </div>
+            
+            {/* Company Switcher for Sysadmin */}
+            {isSysadmin && companies.length > 0 && (
+              <>
+                <div className="h-6 w-px bg-gray-200"></div>
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-gray-400" />
+                  <Select
+                    value={selectedCompanyId || 'all'}
+                    onValueChange={(value) => {
+                      if (value === 'all') {
+                        clearCompanyFilter();
+                      } else {
+                        selectCompany(value);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-[200px] h-9 text-sm" data-testid="company-switcher">
+                      <SelectValue placeholder="All Companies" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">
+                        <span className="flex items-center gap-2">
+                          <Globe className="w-4 h-4" />
+                          All Companies
+                        </span>
+                      </SelectItem>
+                      {companies.map((company) => (
+                        <SelectItem key={company.id} value={company.id}>
+                          <span className="flex items-center gap-2">
+                            <Building2 className="w-4 h-4" />
+                            {company.name}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
           </div>
           
           <DropdownMenu>
@@ -75,9 +138,14 @@ const AdminLayout = () => {
                 <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
                   <User className="w-4 h-4 text-gray-600" />
                 </div>
-                <span className="hidden sm:inline text-sm font-medium text-gray-700">
-                  {user?.first_name || user?.email?.split('@')[0]}
-                </span>
+                <div className="hidden sm:block text-left">
+                  <span className="text-sm font-medium text-gray-700 block">
+                    {user?.first_name || user?.email?.split('@')[0]}
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {isSysadmin ? 'System Admin' : 'Company Admin'}
+                  </span>
+                </div>
                 <ChevronDown className="w-4 h-4 text-gray-400" />
               </Button>
             </DropdownMenuTrigger>
@@ -108,7 +176,7 @@ const AdminLayout = () => {
                     : 'border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300'
                 }`
               }
-              data-testid={`nav-${label.toLowerCase()}`}
+              data-testid={`nav-${label.toLowerCase().replace(' ', '-')}`}
             >
               <Icon className="w-4 h-4" />
               {label}
@@ -122,6 +190,14 @@ const AdminLayout = () => {
         <Outlet />
       </main>
     </div>
+  );
+};
+
+const AdminLayout = () => {
+  return (
+    <AdminProvider>
+      <AdminLayoutContent />
+    </AdminProvider>
   );
 };
 
