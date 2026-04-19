@@ -256,8 +256,8 @@ class SettingResponse(BaseModel):
 
 class BambooHRSettings(BaseModel):
     api_key: Optional[str] = None
-    company_domain: Optional[str] = None
-    sync_enabled: bool = False
+    subdomain: Optional[str] = None
+    enabled: bool = False
     last_sync: Optional[datetime] = None
 
 class AzureSSOSettings(BaseModel):

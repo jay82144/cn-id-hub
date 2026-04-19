@@ -50,6 +50,7 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - [x] Roles CRUD with default app assignments
 - [x] Users CRUD with role/app overrides
 - [x] Employees CRUD with search
+- [x] BambooHR API integration with real sync (NEW)
 - [x] Settings management (BambooHR, Azure SSO)
 - [x] Multi-tenancy with companies
 - [x] Company-App allocations (NEW)
@@ -115,8 +116,8 @@ For fresh deployments:
 - [ ] Audit logging for admin actions
 
 ### P2 (Nice to Have)
-- [ ] BambooHR actual API integration
-- [ ] Magic link email delivery (currently logs to console)
+- [x] BambooHR actual API integration (DONE)
+- [ ] Magic link email delivery (hidden, email service ready)
 - [ ] Bulk user import
 - [ ] Employee org chart visualization
 - [ ] App usage analytics

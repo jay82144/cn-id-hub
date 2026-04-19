@@ -924,9 +924,84 @@ async def update_bamboohr_settings(data: BambooHRSettings, db: AsyncSession = De
 
 @api_router.post("/settings/bamboohr/sync")
 async def sync_bamboohr(db: AsyncSession = Depends(get_db), admin: User = Depends(get_sysadmin)):
-    """Trigger BambooHR employee sync (placeholder)"""
-    await log_audit_event(AuditAction.SETTINGS_CHANGE, admin.id, admin.email, "settings", "bamboohr_sync", "Triggered BambooHR sync")
-    return {"message": "BambooHR sync triggered (mock implementation)", "synced": 0}
+    """Trigger BambooHR employee sync"""
+    from bamboohr_service import BambooHRConfig, sync_bamboohr_employees
+    
+    # Get BambooHR settings
+    settings = {}
+    for key in ['bamboohr_api_key', 'bamboohr_subdomain', 'bamboohr_enabled']:
+        result = await db.execute(select(Settings).where(Settings.key == key))
+        setting = result.scalar_one_or_none()
+        if setting:
+            settings[key] = setting.value
+    
+    if settings.get('bamboohr_enabled', 'false').lower() != 'true':
+        raise HTTPException(status_code=400, detail="BambooHR sync is not enabled")
+    
+    if not settings.get('bamboohr_api_key') or not settings.get('bamboohr_subdomain'):
+        raise HTTPException(status_code=400, detail="BambooHR is not configured. Please set API key and subdomain.")
+    
+    # Determine company to sync to
+    company_id = admin.company_id
+    if not company_id:
+        # For sysadmin without company, get the first company or create default
+        company_result = await db.execute(select(Company).limit(1))
+        company = company_result.scalar_one_or_none()
+        if not company:
+            raise HTTPException(status_code=400, detail="No company found. Create a company first.")
+        company_id = company.id
+    
+    config = BambooHRConfig(
+        subdomain=settings['bamboohr_subdomain'],
+        api_key=settings['bamboohr_api_key']
+    )
+    
+    result = await sync_bamboohr_employees(config, db, str(company_id))
+    
+    await log_audit_event(
+        AuditAction.SETTINGS_CHANGE, 
+        admin.id, 
+        admin.email, 
+        "settings", 
+        "bamboohr_sync", 
+        f"BambooHR sync: {result.created} created, {result.updated} updated"
+    )
+    
+    return {
+        "success": result.success,
+        "message": result.message,
+        "total_fetched": result.total_fetched,
+        "created": result.created,
+        "updated": result.updated,
+        "errors": result.errors[:5] if result.errors else [],  # Return first 5 errors
+        "sync_time": result.sync_time
+    }
+
+@api_router.post("/settings/bamboohr/test")
+async def test_bamboohr_connection(db: AsyncSession = Depends(get_db), admin: User = Depends(get_sysadmin)):
+    """Test BambooHR API connection"""
+    from bamboohr_service import BambooHRConfig, BambooHRService
+    
+    # Get BambooHR settings
+    settings = {}
+    for key in ['bamboohr_api_key', 'bamboohr_subdomain']:
+        result = await db.execute(select(Settings).where(Settings.key == key))
+        setting = result.scalar_one_or_none()
+        if setting:
+            settings[key] = setting.value
+    
+    if not settings.get('bamboohr_api_key') or not settings.get('bamboohr_subdomain'):
+        return {"success": False, "message": "BambooHR is not configured. Please set API key and subdomain."}
+    
+    config = BambooHRConfig(
+        subdomain=settings['bamboohr_subdomain'],
+        api_key=settings['bamboohr_api_key']
+    )
+    
+    service = BambooHRService(config)
+    result = await service.test_connection()
+    
+    return result
 
 @api_router.get("/settings/azure-sso", response_model=AzureSSOSettings)
 async def get_azure_sso_settings(db: AsyncSession = Depends(get_db), admin: User = Depends(get_sysadmin)):

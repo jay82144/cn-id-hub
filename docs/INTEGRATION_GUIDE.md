@@ -391,3 +391,6 @@ Sysadmins automatically see all active apps.
 | `/api/identity/context` | GET | Bearer | Get identity context |
 | `/api/identity/company/{id}` | GET | Bearer | Get company info |
 | `/api/admin/audit-logs` | GET | Bearer (sysadmin) | View audit logs |
+| `/api/settings/bamboohr` | GET/PUT | Bearer (sysadmin) | BambooHR settings |
+| `/api/settings/bamboohr/test` | POST | Bearer (sysadmin) | Test BambooHR connection |
+| `/api/settings/bamboohr/sync` | POST | Bearer (sysadmin) | Sync employees from BambooHR |

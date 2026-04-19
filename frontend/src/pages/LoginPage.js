@@ -307,7 +307,7 @@ const LoginPage = () => {
                 )}
               </Button>
 
-              {/* Toggle mode */}
+              {/* Toggle mode - HIDDEN: Magic link email delivery not yet configured
               <div className="mt-6 text-center">
                 <button
                   type="button"
@@ -318,6 +318,7 @@ const LoginPage = () => {
                   {mode === 'password' ? 'Sign in with magic link instead' : 'Sign in with password instead'}
                 </button>
               </div>
+              */}
             </form>
           )}
         </div>
