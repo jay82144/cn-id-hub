@@ -1,19 +1,7 @@
 import axios from 'axios';
 
-// In production, use relative URLs when frontend proxies /api to backend
-// REACT_APP_BACKEND_URL is set at build time for the external URL
-const getApiBaseUrl = () => {
-  // If REACT_APP_BACKEND_URL is set, use it (external access)
-  // Otherwise, use relative /api (nginx proxy)
-  const backendUrl = process.env.REACT_APP_BACKEND_URL;
-  if (backendUrl) {
-    return `${backendUrl}/api`;
-  }
-  return '/api';
-};
-
 const api = axios.create({
-  baseURL: getApiBaseUrl(),
+  baseURL: `${process.env.REACT_APP_BACKEND_URL}/api`,
   headers: {
     'Content-Type': 'application/json',
   },

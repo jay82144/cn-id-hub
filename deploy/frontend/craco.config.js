@@ -1,7 +1,8 @@
-// craco.config.js - Production configuration
+// craco.config.js
 const path = require("path");
+require("dotenv").config();
 
-module.exports = {
+let webpackConfig = {
   eslint: {
     configure: {
       extends: ["plugin:react-hooks/recommended"],
@@ -32,3 +33,9 @@ module.exports = {
     },
   },
 };
+
+webpackConfig.devServer = (devServerConfig) => {
+  return devServerConfig;
+};
+
+module.exports = webpackConfig;

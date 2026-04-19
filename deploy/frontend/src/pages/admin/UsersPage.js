@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
+import { useAdmin } from '@/context/AdminContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,9 +30,11 @@ import {
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Loader2, Users, Shield, LayoutGrid } from 'lucide-react';
+import { Plus, Pencil, Trash2, Loader2, Users, Shield, LayoutGrid, Building2 } from 'lucide-react';
 
 const UsersPage = () => {
+  const { isSysadmin } = useAuth();
+  const { selectedCompanyId, getCompanyFilter } = useAdmin();
   const [users, setUsers] = useState([]);
   const [apps, setApps] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -52,12 +56,14 @@ const UsersPage = () => {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [selectedCompanyId]);
 
   const fetchData = async () => {
+    setLoading(true);
     try {
+      const params = getCompanyFilter();
       const [usersRes, appsRes, rolesRes] = await Promise.all([
-        api.get('/users'),
+        api.get('/users', { params }),
         api.get('/apps?include_inactive=true'),
         api.get('/roles'),
       ]);
@@ -200,6 +206,7 @@ const UsersPage = () => {
           <TableHeader>
             <TableRow className="bg-gray-50">
               <TableHead className="font-semibold">User</TableHead>
+              {isSysadmin && <TableHead className="font-semibold">Company</TableHead>}
               <TableHead className="font-semibold">Role</TableHead>
               <TableHead className="font-semibold">Status</TableHead>
               <TableHead className="font-semibold">Last Login</TableHead>
@@ -209,7 +216,7 @@ const UsersPage = () => {
           <TableBody>
             {users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center py-12 text-gray-500">
+                <TableCell colSpan={isSysadmin ? 6 : 5} className="text-center py-12 text-gray-500">
                   <Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />
                   No users found
                 </TableCell>
@@ -223,6 +230,18 @@ const UsersPage = () => {
                       <div className="text-sm text-gray-500">{user.email}</div>
                     </div>
                   </TableCell>
+                  {isSysadmin && (
+                    <TableCell>
+                      {user.company_name ? (
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-gray-400" />
+                          <span className="text-sm">{user.company_name}</span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400">No company</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell>
                     <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
                       {user.role}
