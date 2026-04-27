@@ -281,3 +281,91 @@ async def get_current_user_info(
 ):
     """Get current authenticated user info"""
     return UserResponse.model_validate(current_user)
+
+
+# ==================== SSO REDIRECT VALIDATION ====================
+
+from pydantic import BaseModel
+from models import App, Settings
+
+class RedirectValidationRequest(BaseModel):
+    redirect_url: str
+
+class RedirectValidationResponse(BaseModel):
+    allowed: bool
+    reason: str = None
+
+
+def extract_origin(url: str) -> str:
+    """Extract origin (scheme + host + port) from URL"""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return origin
+
+
+@router.post("/validate-redirect", response_model=RedirectValidationResponse)
+async def validate_redirect_url(
+    request: RedirectValidationRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Validate if a redirect URL is allowed for SSO.
+    
+    Validation rules:
+    1. URL must be well-formed
+    2. Must be HTTPS in production (or HTTP for localhost)
+    3. Must match an allowed callback URL:
+       - From registered apps in the database
+       - From Settings (allowed_sso_callbacks)
+    """
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(request.redirect_url)
+        
+        # Basic URL validation
+        if not parsed.scheme or not parsed.netloc:
+            return RedirectValidationResponse(allowed=False, reason="Invalid URL format")
+        
+        # Require HTTPS except for localhost
+        is_localhost = parsed.netloc.startswith('localhost') or parsed.netloc.startswith('127.0.0.1')
+        if not is_localhost and parsed.scheme != 'https':
+            return RedirectValidationResponse(allowed=False, reason="HTTPS required for non-localhost URLs")
+        
+        origin = extract_origin(request.redirect_url)
+        
+        # Check against registered apps
+        result = await db.execute(select(App).where(App.is_active == True))
+        apps = result.scalars().all()
+        
+        for app in apps:
+            if app.url:
+                app_origin = extract_origin(app.url)
+                if origin == app_origin:
+                    logger.info(f"Redirect allowed: {origin} matches app '{app.name}'")
+                    return RedirectValidationResponse(allowed=True)
+        
+        # Check against allowed_sso_callbacks setting
+        settings_result = await db.execute(
+            select(Settings).where(Settings.key == 'allowed_sso_callbacks')
+        )
+        setting = settings_result.scalar_one_or_none()
+        
+        if setting and setting.value:
+            allowed_callbacks = [cb.strip() for cb in setting.value.split(',')]
+            for callback in allowed_callbacks:
+                if callback and (origin == callback or origin.startswith(callback)):
+                    logger.info(f"Redirect allowed: {origin} matches allowed callback '{callback}'")
+                    return RedirectValidationResponse(allowed=True)
+        
+        logger.warning(f"Redirect denied: {origin} not in allowed list")
+        return RedirectValidationResponse(
+            allowed=False, 
+            reason="This application is not registered for SSO. Contact your administrator."
+        )
+        
+    except Exception as e:
+        logger.error(f"Error validating redirect: {e}")
+        return RedirectValidationResponse(allowed=False, reason="Validation error")
+
