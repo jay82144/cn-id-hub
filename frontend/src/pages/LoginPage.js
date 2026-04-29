@@ -21,6 +21,7 @@ const LoginPage = () => {
   const [checkingSSO, setCheckingSSO] = useState(true);
   const [redirectUrl, setRedirectUrl] = useState(null);
   const [redirectAppName, setRedirectAppName] = useState(null);
+  const [redirectValidated, setRedirectValidated] = useState(null); // null = pending, true = valid, false = invalid
 
   // Check for redirect parameter (external app SSO)
   useEffect(() => {
@@ -35,6 +36,7 @@ const LoginPage = () => {
         const hostname = url.hostname;
         const appName = hostname.split('.')[0];
         setRedirectAppName(appName.charAt(0).toUpperCase() + appName.slice(1));
+        setRedirectValidated(null); // Will be validated below
       } catch (e) {
         console.error('Invalid redirect URL:', e);
         toast.error('Invalid redirect URL');
@@ -62,9 +64,11 @@ const LoginPage = () => {
             });
             
             if (validateResponse.data.allowed) {
+              setRedirectValidated(true);
               // Redirect to external app with token
               performRedirect(token);
             } else {
+              setRedirectValidated(false);
               toast.error('This application is not authorized for SSO');
               setRedirectUrl(null);
             }

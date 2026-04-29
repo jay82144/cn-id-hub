@@ -111,6 +111,7 @@ For fresh deployments:
 - [x] Alembic migrations (configured and working)
 - [x] API Key management UI in admin panel
 - [x] Production Docker deployment package
+- [x] Redirect-based SSO for external apps (NEW)
 - [ ] Password reset flow via email (email service ready)
 - [ ] User self-service profile editing
 - [ ] Audit logging for admin actions
@@ -132,6 +133,7 @@ For fresh deployments:
 - `POST /api/auth/change-credentials` - Change both email and password
 - `GET /api/auth/me` - Get current user info
 - `GET /api/auth/verify` - Verify JWT token
+- `POST /api/auth/validate-redirect` - Validate SSO redirect URL (NEW)
 - `POST /api/auth/magic-link` - Request magic link
 - `POST /api/auth/magic-link/verify` - Verify magic link
 - `GET /api/auth/azure/login` - Initiate Azure SSO
