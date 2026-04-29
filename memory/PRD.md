@@ -37,7 +37,7 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 
 ## What's Been Implemented
 
-### Backend (v3.0.0)
+### Backend (v3.2.0)
 - [x] JWT authentication with 15-minute access tokens
 - [x] Refresh tokens (30 days, HttpOnly cookies, database storage)
 - [x] API key authentication for service-to-service calls
@@ -50,13 +50,14 @@ Build an Identity & Employee Hub — a shared authentication and employee data s
 - [x] Roles CRUD with default app assignments
 - [x] Users CRUD with role/app overrides
 - [x] Employees CRUD with search
-- [x] BambooHR API integration with real sync (NEW)
+- [x] BambooHR API integration with real sync
 - [x] Settings management (BambooHR, Azure SSO)
 - [x] Multi-tenancy with companies
-- [x] Company-App allocations (NEW)
-- [x] Company branding (logo, colors) (NEW)
-- [x] Central email service (NEW)
-- [x] Schema migration tracking (NEW)
+- [x] Company-App allocations
+- [x] Company branding (logo, colors)
+- [x] Central email service (Resend)
+- [x] Schema migration tracking
+- [x] **SSO Redirect for external apps** (NEW in v3.2.0)
 
 ### Frontend
 - [x] Login page (password + magic link + SSO button)

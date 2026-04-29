@@ -65,7 +65,7 @@ from auth import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Identity & Employee Hub API", version="3.1.0")
+app = FastAPI(title="Identity & Employee Hub API", version="3.2.0")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
@@ -1050,7 +1050,7 @@ async def update_azure_sso_settings(data: AzureSSOSettings, db: AsyncSession = D
 
 @api_router.get("/")
 async def root():
-    return {"message": "Identity & Employee Hub API", "version": "3.1.0"}
+    return {"message": "Identity & Employee Hub API", "version": "3.2.0"}
 
 @api_router.get("/health")
 async def health():

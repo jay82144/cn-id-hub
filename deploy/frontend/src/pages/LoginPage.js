@@ -6,12 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Loader2, ExternalLink } from 'lucide-react';
 
 const LoginPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, requestMagicLink, loginWithMagicLink, loginWithToken } = useAuth();
+  const { login, requestMagicLink, loginWithMagicLink, loginWithToken, user, isAuthenticated } = useAuth();
   
   const [mode, setMode] = useState('password'); // 'password' | 'magic-link' | 'magic-link-sent'
   const [email, setEmail] = useState('');
@@ -19,18 +19,98 @@ const LoginPage = () => {
   const [loading, setLoading] = useState(false);
   const [azureSSOEnabled, setAzureSSOEnabled] = useState(false);
   const [checkingSSO, setCheckingSSO] = useState(true);
+  const [redirectUrl, setRedirectUrl] = useState(null);
+  const [redirectAppName, setRedirectAppName] = useState(null);
+  const [redirectValidated, setRedirectValidated] = useState(null); // null = pending, true = valid, false = invalid
+
+  // Check for redirect parameter (external app SSO)
+  useEffect(() => {
+    const redirect = searchParams.get('redirect');
+    if (redirect) {
+      try {
+        const decodedUrl = decodeURIComponent(redirect);
+        // Validate URL format
+        const url = new URL(decodedUrl);
+        setRedirectUrl(decodedUrl);
+        // Extract app name from hostname
+        const hostname = url.hostname;
+        const appName = hostname.split('.')[0];
+        setRedirectAppName(appName.charAt(0).toUpperCase() + appName.slice(1));
+        setRedirectValidated(null); // Will be validated below
+      } catch (e) {
+        console.error('Invalid redirect URL:', e);
+        toast.error('Invalid redirect URL');
+      }
+    }
+  }, [searchParams]);
+
+  // If user is already authenticated and there's a redirect, validate and redirect immediately
+  useEffect(() => {
+    const checkExistingAuth = async () => {
+      const token = localStorage.getItem('token');
+      if (token && redirectUrl) {
+        try {
+          // Validate token is still valid
+          const response = await api.get('/auth/verify', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          
+          if (response.data.valid) {
+            // Validate redirect URL against allowed callbacks
+            const validateResponse = await api.post('/auth/validate-redirect', {
+              redirect_url: redirectUrl
+            }, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            
+            if (validateResponse.data.allowed) {
+              setRedirectValidated(true);
+              // Redirect to external app with token
+              performRedirect(token);
+            } else {
+              setRedirectValidated(false);
+              toast.error('This application is not authorized for SSO');
+              setRedirectUrl(null);
+            }
+          }
+        } catch (error) {
+          // Token invalid or validation failed, continue with normal login
+          console.log('Auth check failed, showing login form');
+        }
+      }
+    };
+    
+    if (redirectUrl && !loading) {
+      checkExistingAuth();
+    }
+  }, [redirectUrl]);
+
+  // Perform redirect to external app with token
+  const performRedirect = (token) => {
+    if (!redirectUrl) return;
+    
+    try {
+      const url = new URL(redirectUrl);
+      url.searchParams.set('token', token);
+      window.location.href = url.toString();
+    } catch (e) {
+      console.error('Failed to redirect:', e);
+      toast.error('Failed to redirect to application');
+    }
+  };
 
   // Check for token or error in URL (from Azure SSO callback)
   useEffect(() => {
     const token = searchParams.get('token');
     const error = searchParams.get('error');
     
-    if (token) {
+    if (token && !redirectUrl) {
       handleTokenLogin(token);
     } else if (error) {
       toast.error(decodeURIComponent(error));
-      // Clear the URL params
-      window.history.replaceState({}, '', '/login');
+      // Clear the URL params but keep redirect if present
+      const newUrl = redirectUrl ? `/login?redirect=${encodeURIComponent(redirectUrl)}` : '/login';
+      window.history.replaceState({}, '', newUrl);
     }
     
     // Check if Azure SSO is configured
@@ -67,13 +147,33 @@ const LoginPage = () => {
       }
       
       await loginWithToken(token);
+      
+      // If there's a redirect URL, validate and redirect
+      if (redirectUrl) {
+        try {
+          const validateResponse = await api.post('/auth/validate-redirect', {
+            redirect_url: redirectUrl
+          });
+          
+          if (validateResponse.data.allowed) {
+            performRedirect(token);
+            return;
+          } else {
+            toast.error('This application is not authorized for SSO');
+          }
+        } catch (e) {
+          toast.error('Failed to validate redirect');
+        }
+      }
+      
       toast.success('Logged in successfully');
       navigate('/launchpad');
     } catch (error) {
       toast.error('Login failed');
       localStorage.removeItem('token');
       delete api.defaults.headers.common['Authorization'];
-      window.history.replaceState({}, '', '/login');
+      const newUrl = redirectUrl ? `/login?redirect=${encodeURIComponent(redirectUrl)}` : '/login';
+      window.history.replaceState({}, '', newUrl);
     } finally {
       setLoading(false);
     }
@@ -120,6 +220,27 @@ const LoginPage = () => {
       }
       
       await loginWithToken(access_token);
+      
+      // If there's a redirect URL, validate and redirect to external app
+      if (redirectUrl) {
+        try {
+          const validateResponse = await api.post('/auth/validate-redirect', {
+            redirect_url: redirectUrl
+          });
+          
+          if (validateResponse.data.allowed) {
+            toast.success('Redirecting to application...');
+            performRedirect(access_token);
+            return;
+          } else {
+            toast.error('This application is not authorized for SSO');
+          }
+        } catch (e) {
+          console.error('Redirect validation failed:', e);
+          toast.error('Failed to validate redirect');
+        }
+      }
+      
       toast.success('Logged in successfully');
       navigate('/launchpad');
     } catch (error) {
@@ -163,98 +284,105 @@ const LoginPage = () => {
     setLoading(true);
     try {
       const response = await api.get('/auth/azure/login');
-      // Redirect to Microsoft login
-      window.location.href = response.data.auth_url;
+      if (response.data.auth_url) {
+        // Store redirect URL in session storage for after SSO callback
+        if (redirectUrl) {
+          sessionStorage.setItem('sso_redirect', redirectUrl);
+        }
+        window.location.href = response.data.auth_url;
+      }
     } catch (error) {
-      const errorMsg = error.response?.data?.detail || 'Failed to initiate Azure SSO';
-      toast.error(errorMsg);
+      toast.error('Failed to initiate SSO');
       setLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen flex" data-testid="login-page">
-      {/* Left side - Login form */}
-      <div className="w-full lg:w-1/2 flex flex-col justify-center px-8 md:px-16 lg:px-24 py-12">
-        <div className="max-w-md w-full mx-auto">
-          {/* Logo/Brand */}
-          <div className="mb-12">
-            <span className="text-xs tracking-[0.2em] uppercase font-semibold text-gray-400">
+      {/* Left side - Login Form */}
+      <div className="flex-1 flex items-center justify-center p-8 lg:p-12">
+        <div className="w-full max-w-md space-y-8">
+          {/* Header */}
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-gray-500 tracking-wide uppercase">
               Identity Hub
             </span>
-            <h1 className="font-heading text-4xl sm:text-5xl tracking-tighter text-gray-900 mt-2">
+            <h1 className="text-4xl font-bold text-gray-900">
               Welcome back
             </h1>
-            <p className="text-gray-500 mt-3 text-base">
-              Sign in to access your applications
+            <p className="text-gray-600">
+              {redirectUrl ? (
+                <>Sign in to continue to <span className="font-medium text-gray-900">{redirectAppName}</span></>
+              ) : (
+                'Sign in to access your applications'
+              )}
             </p>
           </div>
 
+          {/* External App Indicator */}
+          {redirectUrl && (
+            <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg" data-testid="redirect-indicator">
+              <ExternalLink className="w-4 h-4 text-blue-600" />
+              <span className="text-sm text-blue-800">
+                You'll be redirected to <span className="font-medium">{redirectAppName}</span> after signing in
+              </span>
+            </div>
+          )}
+
           {/* Azure SSO Button */}
-          <Button
-            type="button"
-            variant="outline"
-            className={`w-full h-12 border-gray-200 hover:bg-gray-50 text-gray-900 font-medium mb-6 ${
-              !azureSSOEnabled ? 'opacity-60' : ''
-            }`}
-            onClick={handleAzureSSO}
-            disabled={loading || checkingSSO}
-            data-testid="azure-sso-button"
-          >
-            {loading ? (
-              <Loader2 className="w-5 h-5 animate-spin mr-3" />
-            ) : (
-              <svg className="w-5 h-5 mr-3" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M10 0H0V10H10V0Z" fill="#F25022"/>
-                <path d="M21 0H11V10H21V0Z" fill="#7FBA00"/>
-                <path d="M10 11H0V21H10V11Z" fill="#00A4EF"/>
-                <path d="M21 11H11V21H21V11Z" fill="#FFB900"/>
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full h-12 justify-center gap-2 font-medium"
+              onClick={handleAzureSSO}
+              disabled={loading || checkingSSO || !azureSSOEnabled}
+              data-testid="azure-sso-button"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+                <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+                <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+                <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+                <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
               </svg>
-            )}
-            Continue with Microsoft
-            {!azureSSOEnabled && !checkingSSO && (
-              <span className="ml-2 text-xs text-gray-400">(not configured)</span>
-            )}
-          </Button>
+              Continue with Microsoft
+              {!azureSSOEnabled && !checkingSSO && (
+                <span className="text-xs text-gray-400">(not configured)</span>
+              )}
+            </Button>
+          </div>
 
           {/* Divider */}
-          <div className="relative my-6">
+          <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-200"></div>
+              <span className="w-full border-t" />
             </div>
-            <div className="relative flex justify-center">
-              <span className="bg-white px-4 text-xs tracking-[0.15em] uppercase text-gray-400">
-                Or
-              </span>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-white px-2 text-gray-500">Or</span>
             </div>
           </div>
 
+          {/* Login Form */}
           {mode === 'magic-link-sent' ? (
-            <div className="text-center py-8 animate-fade-in">
-              <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Mail className="w-8 h-8 text-blue-600" />
-              </div>
-              <h2 className="text-xl font-medium text-gray-900 mb-2">Check your email</h2>
-              <p className="text-gray-500 mb-6">
-                We've sent a magic link to<br />
-                <span className="font-medium text-gray-900">{email}</span>
+            <div className="text-center space-y-4 p-6 bg-gray-50 rounded-lg">
+              <Mail className="w-12 h-12 mx-auto text-gray-400" />
+              <h3 className="text-lg font-medium">Check your email</h3>
+              <p className="text-sm text-gray-600">
+                We've sent a magic link to <strong>{email}</strong>
               </p>
               <Button
-                variant="ghost"
+                variant="link"
                 onClick={() => setMode('password')}
-                className="text-gray-500 hover:text-gray-900"
-                data-testid="back-to-login-button"
+                className="text-sm"
               >
                 Back to login
               </Button>
             </div>
           ) : (
-            <form onSubmit={mode === 'password' ? handlePasswordLogin : handleMagicLinkRequest}>
+            <form onSubmit={mode === 'password' ? handlePasswordLogin : handleMagicLinkRequest} className="space-y-5">
               {/* Email field */}
-              <div className="mb-4">
-                <Label htmlFor="email" className="text-sm font-medium text-gray-700 mb-1.5 block">
-                  Email address
-                </Label>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email address</Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <Input
@@ -262,19 +390,18 @@ const LoginPage = () => {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="pl-10 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500"
                     placeholder="you@company.com"
+                    className="pl-10 h-12"
+                    disabled={loading}
                     data-testid="email-input"
                   />
                 </div>
               </div>
 
-              {/* Password field (only in password mode) */}
+              {/* Password field (only for password mode) */}
               {mode === 'password' && (
-                <div className="mb-6 animate-fade-in">
-                  <Label htmlFor="password" className="text-sm font-medium text-gray-700 mb-1.5 block">
-                    Password
-                  </Label>
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
@@ -282,8 +409,9 @@ const LoginPage = () => {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10 h-12 border-gray-200 focus:border-blue-500 focus:ring-blue-500"
                       placeholder="Enter your password"
+                      className="pl-10 h-12"
+                      disabled={loading}
                       data-testid="password-input"
                     />
                   </div>
@@ -324,7 +452,7 @@ const LoginPage = () => {
           
           {/* Version indicator */}
           <div className="mt-8 text-center">
-            <span className="text-xs text-gray-400">v3.1.0</span>
+            <span className="text-xs text-gray-400">v3.2.0</span>
           </div>
         </div>
       </div>

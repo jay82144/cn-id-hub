@@ -69,6 +69,11 @@ services:
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
       
+      # Email Service (Resend) - optional
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SENDER_EMAIL: ${SENDER_EMAIL:-onboarding@resend.dev}
+      SENDER_NAME: ${SENDER_NAME:-Identity Hub}
+      
       # Bootstrap Admin
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin.new@local}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-ChangeMeNow!}
