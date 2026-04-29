@@ -23,6 +23,7 @@ const LoginPage = () => {
   const [redirectAppName, setRedirectAppName] = useState(null);
   const [redirectValidated, setRedirectValidated] = useState(null); // null = pending, true = valid, false = invalid
   const [ssoCheckDone, setSsoCheckDone] = useState(false);
+  const [autoRedirecting, setAutoRedirecting] = useState(false); // Show loading while auto-redirecting
 
   // Check for redirect parameter (external app SSO)
   useEffect(() => {
@@ -52,6 +53,7 @@ const LoginPage = () => {
       
       const token = localStorage.getItem('token');
       if (token && redirectUrl) {
+        setAutoRedirecting(true); // Show loading state
         try {
           // Validate token is still valid
           const response = await api.get('/auth/verify', {
@@ -70,18 +72,23 @@ const LoginPage = () => {
             
             if (validateResponse.data.allowed) {
               setRedirectValidated(true);
-              // Redirect to external app with token
+              // Redirect to external app with token - this happens automatically!
               performRedirect(token);
               return; // Prevent further execution
             } else {
               setRedirectValidated(false);
+              setAutoRedirecting(false);
               toast.error(validateResponse.data.reason || 'This application is not authorized for SSO');
-              // Don't clear redirectUrl - just mark as invalid
             }
+          } else {
+            // Token invalid, need to login
+            setAutoRedirecting(false);
+            setSsoCheckDone(true);
           }
         } catch (error) {
           // Token invalid or validation failed, continue with normal login
           console.log('Auth check failed, showing login form');
+          setAutoRedirecting(false);
           setSsoCheckDone(true);
         }
       }
@@ -306,6 +313,21 @@ const LoginPage = () => {
       setLoading(false);
     }
   };
+
+  // Show loading screen while auto-redirecting
+  if (autoRedirecting) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50" data-testid="auto-redirect-loading">
+        <div className="text-center space-y-4">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto" />
+          <div>
+            <p className="text-lg font-medium text-gray-900">Authenticating...</p>
+            <p className="text-sm text-gray-500">Redirecting you to {redirectAppName}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex" data-testid="login-page">
