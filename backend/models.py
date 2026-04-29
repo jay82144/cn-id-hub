@@ -1,10 +1,30 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Enum as SQLEnum, Integer, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Enum as SQLEnum, Integer, UniqueConstraint, TypeDecorator
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 import uuid
 from datetime import datetime, timezone
 import enum
+
+# Portable UUID type that works with both PostgreSQL and SQLite
+class GUID(TypeDecorator):
+    """Platform-independent GUID type.
+    Uses String(36) for storage, works across SQLite, PostgreSQL, etc.
+    """
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            if isinstance(value, uuid.UUID):
+                return str(value)
+            return str(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            if not isinstance(value, uuid.UUID):
+                return uuid.UUID(value)
+        return value
 
 class UserRole(str, enum.Enum):
     SYSADMIN = "sysadmin"      # Can manage all companies and system settings
@@ -29,7 +49,7 @@ class Company(Base):
     """Multi-tenant company/organization"""
     __tablename__ = "companies"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
     name = Column(String(200), nullable=False)
     slug = Column(String(100), unique=True, nullable=False, index=True)  # URL-friendly identifier
     logo_url = Column(String(500), nullable=True)
@@ -50,8 +70,8 @@ class Company(Base):
 class User(Base):
     __tablename__ = "users"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)  # Null for sysadmins
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    company_id = Column(GUID, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)  # Null for sysadmins
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=True)  # Nullable for SSO-only users
     first_name = Column(String(100), nullable=True)
@@ -77,8 +97,8 @@ class User(Base):
 class Role(Base):
     __tablename__ = "roles"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)  # Null for global roles
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    company_id = Column(GUID, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)  # Null for global roles
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -97,8 +117,8 @@ class Role(Base):
 class App(Base):
     __tablename__ = "apps"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)  # Null for global apps
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    company_id = Column(GUID, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)  # Null for global apps
     name = Column(String(100), nullable=False)
     url = Column(String(500), nullable=False)
     icon = Column(String(100), nullable=True)  # Lucide icon name or URL
@@ -118,9 +138,9 @@ class RoleApp(Base):
     """Default apps assigned to a role"""
     __tablename__ = "role_apps"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
-    app_id = Column(UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    role_id = Column(GUID, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    app_id = Column(GUID, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     
     # Relationships
@@ -131,9 +151,9 @@ class UserApp(Base):
     """Per-user app overrides (additions or removals from role defaults)"""
     __tablename__ = "user_apps"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    app_id = Column(UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    app_id = Column(GUID, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     is_granted = Column(Boolean, default=True, nullable=False)  # True = explicitly granted, False = explicitly revoked
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     
@@ -145,9 +165,9 @@ class UserRoleAssignment(Base):
     """Assigns roles to users"""
     __tablename__ = "user_role_assignments"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role_id = Column(GUID, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     
     # Relationships
@@ -159,9 +179,9 @@ class CompanyApp(Base):
     """Apps purchased/allocated to companies - companies must have an app before users can access it"""
     __tablename__ = "company_apps"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
-    app_id = Column(UUID(as_uuid=True), ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    company_id = Column(GUID, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    app_id = Column(GUID, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False, index=True)
     is_active = Column(Boolean, default=True, nullable=False)  # Can disable without removing
     purchased_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=True)  # Null = never expires
@@ -177,9 +197,9 @@ class CompanyApp(Base):
 class Employee(Base):
     __tablename__ = "employees"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    company_id = Column(GUID, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     bamboo_id = Column(String(100), nullable=True)  # External BambooHR ID
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
@@ -189,7 +209,7 @@ class Employee(Base):
     team = Column(String(100), nullable=True)
     job_title = Column(String(150), nullable=True)
     location = Column(String(150), nullable=True)
-    manager_id = Column(UUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
+    manager_id = Column(GUID, ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
     hire_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(SQLEnum(EmployeeStatus), default=EmployeeStatus.ACTIVE, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -209,7 +229,7 @@ class Settings(Base):
     """Global system settings"""
     __tablename__ = "settings"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
     key = Column(String(100), unique=True, nullable=False)
     value = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
@@ -219,8 +239,8 @@ class CompanySettings(Base):
     """Per-company settings (Azure SSO, BambooHR, etc.)"""
     __tablename__ = "company_settings"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    company_id = Column(GUID, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
     key = Column(String(100), nullable=False)
     value = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
@@ -238,8 +258,8 @@ class RefreshToken(Base):
     """Refresh tokens for JWT authentication (30 day expiry, stored for revocation)"""
     __tablename__ = "refresh_tokens"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     token_hash = Column(String(255), unique=True, nullable=False, index=True)  # Hashed token for lookup
     device_info = Column(String(500), nullable=True)  # User agent / device info
     ip_address = Column(String(45), nullable=True)  # IPv4/IPv6
@@ -264,9 +284,9 @@ class APIKey(Base):
     """API keys for service-to-service authentication"""
     __tablename__ = "api_keys"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = Column(GUID, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
     name = Column(String(100), nullable=False)  # Descriptive name for the key
     key_prefix = Column(String(10), nullable=False)  # First 8 chars for identification (e.g., "idhub_xx")
     key_hash = Column(String(255), unique=True, nullable=False, index=True)  # Hashed full key
