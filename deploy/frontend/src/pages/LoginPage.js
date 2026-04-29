@@ -22,6 +22,7 @@ const LoginPage = () => {
   const [redirectUrl, setRedirectUrl] = useState(null);
   const [redirectAppName, setRedirectAppName] = useState(null);
   const [redirectValidated, setRedirectValidated] = useState(null); // null = pending, true = valid, false = invalid
+  const [ssoCheckDone, setSsoCheckDone] = useState(false);
 
   // Check for redirect parameter (external app SSO)
   useEffect(() => {
@@ -47,6 +48,8 @@ const LoginPage = () => {
   // If user is already authenticated and there's a redirect, validate and redirect immediately
   useEffect(() => {
     const checkExistingAuth = async () => {
+      if (ssoCheckDone) return; // Prevent multiple checks
+      
       const token = localStorage.getItem('token');
       if (token && redirectUrl) {
         try {
@@ -63,27 +66,31 @@ const LoginPage = () => {
               headers: { Authorization: `Bearer ${token}` }
             });
             
+            setSsoCheckDone(true);
+            
             if (validateResponse.data.allowed) {
               setRedirectValidated(true);
               // Redirect to external app with token
               performRedirect(token);
+              return; // Prevent further execution
             } else {
               setRedirectValidated(false);
-              toast.error('This application is not authorized for SSO');
-              setRedirectUrl(null);
+              toast.error(validateResponse.data.reason || 'This application is not authorized for SSO');
+              // Don't clear redirectUrl - just mark as invalid
             }
           }
         } catch (error) {
           // Token invalid or validation failed, continue with normal login
           console.log('Auth check failed, showing login form');
+          setSsoCheckDone(true);
         }
       }
     };
     
-    if (redirectUrl && !loading) {
+    if (redirectUrl && !ssoCheckDone) {
       checkExistingAuth();
     }
-  }, [redirectUrl]);
+  }, [redirectUrl, isAuthenticated, ssoCheckDone]);
 
   // Perform redirect to external app with token
   const performRedirect = (token) => {
@@ -233,11 +240,14 @@ const LoginPage = () => {
             performRedirect(access_token);
             return;
           } else {
-            toast.error('This application is not authorized for SSO');
+            toast.error(validateResponse.data.reason || 'This application is not authorized for SSO');
+            // Clear redirect and go to launchpad
+            setRedirectUrl(null);
           }
         } catch (e) {
           console.error('Redirect validation failed:', e);
           toast.error('Failed to validate redirect');
+          setRedirectUrl(null);
         }
       }
       
@@ -452,7 +462,7 @@ const LoginPage = () => {
           
           {/* Version indicator */}
           <div className="mt-8 text-center">
-            <span className="text-xs text-gray-400">v3.2.0</span>
+            <span className="text-xs text-gray-400">v3.1.0</span>
           </div>
         </div>
       </div>

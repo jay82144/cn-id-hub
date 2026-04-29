@@ -61,7 +61,12 @@ const PublicRoute = ({ children }) => {
     );
   }
   
-  if (user) {
+  // If there's a redirect parameter, let the LoginPage handle SSO flow
+  // even if the user is already authenticated
+  const urlParams = new URLSearchParams(window.location.search);
+  const hasRedirect = urlParams.has('redirect');
+  
+  if (user && !hasRedirect) {
     return <Navigate to="/launchpad" replace />;
   }
   
