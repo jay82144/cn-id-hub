@@ -65,7 +65,7 @@ from auth import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Identity & Employee Hub API", version="3.2.0")
+app = FastAPI(title="Identity & Employee Hub API", version="3.1.0")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
@@ -524,7 +524,12 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db), admi
     user = User(**user_data)
     db.add(user)
     await db.commit()
-    await db.refresh(user)
+    
+    # Re-fetch with company eagerly loaded to avoid lazy loading issues
+    result = await db.execute(
+        select(User).options(selectinload(User.company)).where(User.id == user.id)
+    )
+    user = result.scalar_one()
     
     await log_audit_event(AuditAction.CREATE, admin.id, admin.email, "user", str(user.id), f"Created user: {user.email}")
     return UserResponse.model_validate(user)
@@ -581,7 +586,12 @@ async def update_user(user_id: uuid.UUID, data: UserUpdate, db: AsyncSession = D
         user.password_hash = hash_password(data.password)
     
     await db.commit()
-    await db.refresh(user)
+    
+    # Re-fetch with company eagerly loaded to avoid lazy loading issues
+    result = await db.execute(
+        select(User).options(selectinload(User.company)).where(User.id == user_id)
+    )
+    user = result.scalar_one()
     
     await log_audit_event(AuditAction.UPDATE, admin.id, admin.email, "user", str(user_id), f"Updated user: {user.email}")
     return UserResponse.model_validate(user)
@@ -1050,7 +1060,7 @@ async def update_azure_sso_settings(data: AzureSSOSettings, db: AsyncSession = D
 
 @api_router.get("/")
 async def root():
-    return {"message": "Identity & Employee Hub API", "version": "3.2.0"}
+    return {"message": "Identity & Employee Hub API", "version": "3.1.0"}
 
 @api_router.get("/health")
 async def health():

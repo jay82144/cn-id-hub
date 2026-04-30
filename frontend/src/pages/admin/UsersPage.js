@@ -123,6 +123,10 @@ const UsersPage = () => {
       if (editingUser) {
         const updateData = { ...formData };
         if (!updateData.password) delete updateData.password;
+        // Convert empty string to null for company_id
+        if (updateData.company_id === '' || updateData.company_id === 'none') {
+          updateData.company_id = null;
+        }
         await api.put(`/users/${editingUser.id}`, updateData);
         toast.success('User updated successfully');
       } else {
@@ -131,13 +135,26 @@ const UsersPage = () => {
           setSaving(false);
           return;
         }
-        await api.post('/users', formData);
+        // Convert empty string to null for company_id
+        const createData = { ...formData };
+        if (createData.company_id === '' || createData.company_id === 'none') {
+          createData.company_id = null;
+        }
+        await api.post('/users', createData);
         toast.success('User created successfully');
       }
       setDialogOpen(false);
       fetchData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to save user');
+      const errorDetail = error.response?.data?.detail;
+      if (typeof errorDetail === 'string') {
+        toast.error(errorDetail);
+      } else if (Array.isArray(errorDetail)) {
+        // Pydantic validation errors
+        toast.error(errorDetail.map(e => e.msg).join(', ') || 'Validation error');
+      } else {
+        toast.error('Failed to save user');
+      }
     } finally {
       setSaving(false);
     }
