@@ -116,6 +116,7 @@ class UserUpdate(BaseModel):
     status: Optional[UserStatus] = None
     auth_method: Optional[AuthMethod] = None
     must_change_password: Optional[bool] = None
+    company_id: Optional[UUID] = None
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

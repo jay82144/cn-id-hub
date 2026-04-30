@@ -93,6 +93,11 @@ class User(Base):
     user_apps = relationship("UserApp", back_populates="user", cascade="all, delete-orphan")
     user_roles = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     employee = relationship("Employee", back_populates="user", uselist=False)
+    
+    @property
+    def company_name(self):
+        """Get company name for API responses"""
+        return self.company.name if self.company else None
 
 class Role(Base):
     __tablename__ = "roles"

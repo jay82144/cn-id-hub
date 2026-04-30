@@ -38,6 +38,7 @@ const UsersPage = () => {
   const [users, setUsers] = useState([]);
   const [apps, setApps] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
@@ -49,6 +50,7 @@ const UsersPage = () => {
     first_name: '',
     last_name: '',
     role: 'user',
+    company_id: '',
   });
   const [saving, setSaving] = useState(false);
   const [userApps, setUserApps] = useState([]);
@@ -62,14 +64,16 @@ const UsersPage = () => {
     setLoading(true);
     try {
       const params = getCompanyFilter();
-      const [usersRes, appsRes, rolesRes] = await Promise.all([
+      const [usersRes, appsRes, rolesRes, companiesRes] = await Promise.all([
         api.get('/users', { params }),
         api.get('/apps?include_inactive=true'),
         api.get('/roles'),
+        isSysadmin ? api.get('/companies') : Promise.resolve({ data: [] }),
       ]);
       setUsers(usersRes.data);
       setApps(appsRes.data);
       setRoles(rolesRes.data);
+      setCompanies(companiesRes.data);
     } catch (error) {
       toast.error('Failed to load data');
     } finally {
@@ -79,7 +83,7 @@ const UsersPage = () => {
 
   const openCreateDialog = () => {
     setEditingUser(null);
-    setFormData({ email: '', password: '', first_name: '', last_name: '', role: 'user' });
+    setFormData({ email: '', password: '', first_name: '', last_name: '', role: 'user', company_id: selectedCompanyId || '' });
     setDialogOpen(true);
   };
 
@@ -91,6 +95,7 @@ const UsersPage = () => {
       first_name: user.first_name || '',
       last_name: user.last_name || '',
       role: user.role,
+      company_id: user.company_id || '',
     });
     setDialogOpen(true);
   };
@@ -355,6 +360,27 @@ const UsersPage = () => {
                 </SelectContent>
               </Select>
             </div>
+            {isSysadmin && companies.length > 0 && (
+              <div>
+                <Label htmlFor="company">Company</Label>
+                <Select
+                  value={formData.company_id}
+                  onValueChange={(value) => setFormData({ ...formData, company_id: value === 'none' ? '' : value })}
+                >
+                  <SelectTrigger data-testid="user-company-select">
+                    <SelectValue placeholder="Select company" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No company</SelectItem>
+                    {companies.map((company) => (
+                      <SelectItem key={company.id} value={company.id}>
+                        {company.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
